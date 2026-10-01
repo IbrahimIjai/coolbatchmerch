@@ -7,7 +7,7 @@ export const site = {
     lines: ['Naija', 'Threads'] as const,
     name: 'Naija Threads'
   },
-  description: 'Naija Threads — the Nigeria @ 66 independence capsule. Tees and shorts in green, white and green.',
+  description: 'Naija Threads — the Nigeria @ 66 independence capsule. Tees, long sleeves and sweats in green, white and green.',
   email: 'hello@naijathreads.ng',
   instagram: 'https://instagram.com/naijathreads',
   /** Optional shop link used by "See availability" on the rack. Leave empty to email instead. */
@@ -17,11 +17,16 @@ export const site = {
     'Subscribe to our newsletter',
     'Happy 66th, Nigeria'
   ],
+  /** 3D garment models (CC BY 4.0) — attribution is required wherever the site is shared. */
+  modelCredits: [
+    { work: 'Basic T-Shirt', url: 'https://sketchfab.com/3d-models/basic-t-shirt-71bdf5940b5d41b8b46628a615e9b0ed', author: 'MadeByYeshe', authorUrl: 'https://sketchfab.com/MadeByYeshe' },
+    { work: 'Party Starter - Layered T-Shirts', url: 'https://sketchfab.com/3d-models/party-starter-layered-t-shirts-fbfa86ea615e4028b8ad400de902bfd4', author: 'RealityRoller', authorUrl: 'https://sketchfab.com/RealityRoller' }
+  ],
   about: {
     title: 'About the studio',
     paragraphs: [
-      'Naija Threads is a small print studio making everyday clothes with a Nigerian accent — heavyweight tees and easy shorts printed in Lagos.',
-      'The Nigeria @ 66 capsule marks sixty-six years of independence, from 1 October 1960 to today. It borrows from the things we grew up around: the green-white-green, adire cloth dyed in Abeokuta, hand-woven aso-oke, the Niger and Benue meeting at Lokoja, and a pot of party jollof on a Sunday.',
+      'Naija Threads is a small print studio making everyday clothes with a Nigerian accent — heavyweight tees, long sleeves and sweats printed in Lagos.',
+      'The Nigeria @ 66 capsule marks sixty-six years of independence, from 1 October 1960 to today. It borrows from the things we grew up around: the green-white-green, adire cloth dyed in Abeokuta, the Lagos skyline, the Niger and Benue meeting at Lokoja, and a pot of party jollof on a Sunday.',
       'Every piece is printed to order in small runs, so availability changes week to week. Ask about a design and we will tell you what is on the rail.'
     ]
   }

@@ -1,0 +1,10 @@
+Model Information:
+* title:	Basic T-Shirt
+* source:	https://sketchfab.com/3d-models/basic-t-shirt-71bdf5940b5d41b8b46628a615e9b0ed
+* author:	MadeByYeshe (https://sketchfab.com/MadeByYeshe)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+This work is based on "Basic T-Shirt" (https://sketchfab.com/3d-models/basic-t-shirt-71bdf5940b5d41b8b46628a615e9b0ed) by MadeByYeshe licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

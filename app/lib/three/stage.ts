@@ -46,7 +46,7 @@ export function createStage(container: HTMLElement, onResize: (stage: Stage) => 
 
   scene.add(new THREE.HemisphereLight('#ffffff', '#d9d1c3', 0.55))
   const key = new THREE.DirectionalLight('#fff4e6', 1.75)
-  key.position.set(-1.6, 3.4, 6)
+  key.position.set(-1.4, 2.4, 6)
   key.castShadow = true
   key.shadow.mapSize.set(2048, 2048)
   key.shadow.camera.left = -3.6
@@ -63,7 +63,7 @@ export function createStage(container: HTMLElement, onResize: (stage: Stage) => 
   rim.position.set(3, 1.5, -2)
   scene.add(rim)
 
-  const wall = new THREE.Mesh(new THREE.PlaneGeometry(16, 8), new THREE.ShadowMaterial({ opacity: 0.06 }))
+  const wall = new THREE.Mesh(new THREE.PlaneGeometry(16, 8), new THREE.ShadowMaterial({ opacity: 0.05 }))
   wall.position.z = -0.9
   wall.receiveShadow = true
   scene.add(wall)

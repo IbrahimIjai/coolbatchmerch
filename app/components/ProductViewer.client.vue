@@ -9,7 +9,7 @@ const props = defineProps<{
 }>()
 
 const container = useTemplateRef<HTMLElement>('container')
-const resolveImage = useProductImage()
+const resolveUrl = useAssetUrl()
 const webgl = hasWebGL()
 const preview = useGarmentPreview(() => webgl ? undefined : props.products[props.index])
 
@@ -20,7 +20,7 @@ onMounted(async () => {
   if (!webgl || !container.value) return
   const { ViewerController } = await import('~/lib/three/viewer')
   if (disposed || !container.value) return
-  viewer = new ViewerController(container.value, props.products, resolveImage, props.index)
+  viewer = new ViewerController(container.value, props.products, resolveUrl, props.index)
 })
 
 watch(() => props.index, index => viewer?.show(index, props.direction))

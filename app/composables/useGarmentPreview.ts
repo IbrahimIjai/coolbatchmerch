@@ -1,18 +1,18 @@
 import type { Product } from '~/data/products'
 
 /**
- * Flat PNG of a garment's painted front — used when WebGL is unavailable.
- * Painting happens on a 2D canvas, so it works without a GPU.
+ * Flat cut-out of a garment's printed front — used when WebGL is unavailable.
+ * The model is shaped and painted on the CPU, so this works without a GPU.
  */
 export function useGarmentPreview(product: MaybeRefOrGetter<Product | undefined>) {
-  const resolveImage = useProductImage()
+  const resolveUrl = useAssetUrl()
   const src = ref<string>()
   watch(() => toValue(product), async (p) => {
     src.value = undefined
     if (!p || import.meta.server) return
-    const { paintGarment } = await import('~/lib/three/garment')
-    const { front } = await paintGarment(p, resolveImage(p))
-    if (toValue(product)?.id === p.id) src.value = front.toDataURL('image/png')
+    const { previewGarment } = await import('~/lib/three/garment')
+    const url = await previewGarment(p, resolveUrl).catch(() => undefined)
+    if (toValue(product)?.id === p.id) src.value = url
   }, { immediate: true })
   return src
 }

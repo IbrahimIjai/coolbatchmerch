@@ -17,7 +17,7 @@ const container = useTemplateRef<HTMLElement>('container')
 const label = useTemplateRef<HTMLElement>('label')
 const hovered = ref<number | null>(null)
 const lastHovered = ref(0)
-const resolveImage = useProductImage()
+const resolveUrl = useAssetUrl()
 
 // Keep showing the last name while the label fades out.
 const labelText = computed(() => {
@@ -32,7 +32,7 @@ function mount() {
   if (!container.value) return
   rack = new RackController(container.value, {
     products: props.products,
-    resolveImage,
+    resolveUrl,
     label: label.value,
     onHover(index) {
       hovered.value = index

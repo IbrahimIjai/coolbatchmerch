@@ -1,149 +1,537 @@
 import * as THREE from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { GarmentKind, Product } from '~/data/products'
 import { clothGrid } from './cloth'
+import { hangerTopAt } from './hardware'
 
-/**
- * Garments are built in "garment space": x is centred, y = 0 is the top edge
- * (collar / waistband) and the garment hangs downwards into negative y.
- * One unit is roughly 55cm, so a tee is about a metre across the sleeves.
+/*
+ * Garments come from real 3D clothing models (see public/models/CREDITS.md).
+ * Those models are "worn": round tubes shaped by an invisible body, sleeves
+ * held out. To hang them we convert them into "garment space" — x centred,
+ * y = 0 at the top of the collar, hanging into negative y, z out of the front —
+ * then:
+ *   1. widen the torso so its circumference lies flat (as a shirt does on a hanger),
+ *   2. flatten the depth to a few centimetres, fuller across the shoulders,
+ *   3. swing the sleeves down from the shoulders,
+ *   4. fit the shoulders just over our wooden hanger.
+ * Our fabric colour and prints are projected onto the front and back, while
+ * the model's own normal map keeps its stitching and wrinkles.
  */
+
 export interface GarmentSpec {
   width: number
   height: number
-  /** Where the garment's top edge sits below the rod centre. */
+  /** Where the top of the collar sits below the rail. */
   drop: number
-  /** Half-thickness of the fabric where the hanger fills the shoulders. */
-  thickness: number
-  /** Half-width of the body panel (sleeves start outside it). */
+  /** Half-width of the torso. */
   body: number
-  /** Shoulder span supported by the hanger. */
+  /** Shoulder span resting on the hanger (pinned in the cloth sim). */
   shoulder: number
 }
 
+interface ModelSource {
+  path: string
+  /** Keep only the largest connected piece, or everything. */
+  keep: 'largest' | 'all'
+  /** Pieces other than the largest form an outer layer worn over it. */
+  layered?: boolean
+  /** Extra downward swing for the sleeves, radians. */
+  sleeveDrop: number
+}
+
+const SOURCES: Record<GarmentKind, ModelSource> = {
+  tee: { path: 'models/basic-tee/basic_t-shirt.glb', keep: 'all', sleeveDrop: 0.12 },
+  longsleeve: { path: 'models/layered-tee/scene.gltf', keep: 'largest', sleeveDrop: 0.42 },
+  layered: { path: 'models/layered-tee/scene.gltf', keep: 'all', layered: true, sleeveDrop: 0.42 }
+}
+
+/** Half-width of every torso once laid flat, in garment units. */
+const TORSO = 0.345
+/** How much wider a round torso becomes when it lies flat (≈ π/2, minus some ease). */
+const FLATTEN_X = 1.45
+
+/** Layout sizes used before the models have loaded (rack spacing, framing). */
 export const GARMENT_SPECS: Record<GarmentKind, GarmentSpec> = {
-  tee: { width: 1.04, height: 1.07, drop: 0.172, thickness: 0.026, body: 0.34, shoulder: 0.34 },
-  longsleeve: { width: 1.04, height: 1.07, drop: 0.172, thickness: 0.026, body: 0.345, shoulder: 0.34 },
-  crewneck: { width: 1.08, height: 1.01, drop: 0.172, thickness: 0.034, body: 0.365, shoulder: 0.35 },
-  shorts: { width: 0.8, height: 0.62, drop: 0.176, thickness: 0.026, body: 0.4, shoulder: 0.3 }
+  tee: { width: 1.06, height: 1.02, drop: 0.168, body: TORSO, shoulder: 0.33 },
+  longsleeve: { width: 1.12, height: 1.08, drop: 0.16, body: TORSO, shoulder: 0.33 },
+  layered: { width: 1.12, height: 1.08, drop: 0.16, body: TORSO, shoulder: 0.33 }
 }
 
-/** Garments that hang from the shoulders on a wooden hanger. */
-export const isTop = (kind: GarmentKind) => kind !== 'shorts'
+/* ---------------------------------------------------------------- loading */
 
-const TEXTURE_WIDTH = 1024
+interface RawModel {
+  positions: Float32Array
+  uvs: Float32Array
+  indices: Uint32Array
+  normalMap: THREE.Texture | null
+  normalScale: THREE.Vector2
+}
 
-/* --------------------------------------------------------------- outlines */
+const rawCache = new Map<string, Promise<RawModel>>()
 
-type Point = [number, number]
-type Segment = { to: Point, c?: Point }
-interface Outline { start: Point, right: Segment[] }
+function loadRaw(url: string) {
+  let pending = rawCache.get(url)
+  if (!pending) {
+    pending = new GLTFLoader().loadAsync(url).then((gltf) => {
+      gltf.scene.updateMatrixWorld(true)
+      const positions: number[] = []
+      const uvs: number[] = []
+      const indices: number[] = []
+      let normalMap: THREE.Texture | null = null
+      const normalScale = new THREE.Vector2(1, 1)
+      gltf.scene.traverse((object) => {
+        const mesh = object as THREE.Mesh
+        if (!mesh.isMesh) return
+        const g = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld)
+        const base = positions.length / 3
+        const pos = g.getAttribute('position')
+        const uv = g.getAttribute('uv')
+        for (let i = 0; i < pos.count; i++) {
+          positions.push(pos.getX(i), pos.getY(i), pos.getZ(i))
+          uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0)
+        }
+        const index = g.getIndex()
+        if (index) for (let i = 0; i < index.count; i++) indices.push(base + index.getX(i))
+        else for (let i = 0; i < pos.count; i++) indices.push(base + i)
+        g.dispose()
+        const material = mesh.material as THREE.MeshStandardMaterial
+        if (!normalMap && material.normalMap) {
+          normalMap = material.normalMap
+          normalScale.copy(material.normalScale)
+        }
+        // Only the normal map is used; release the rest.
+        for (const key of ['map', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap'] as const) {
+          const t = material[key]
+          if (t && t !== normalMap) t.dispose()
+        }
+      })
+      return {
+        positions: Float32Array.from(positions),
+        uvs: Float32Array.from(uvs),
+        indices: Uint32Array.from(indices),
+        normalMap,
+        normalScale
+      }
+    })
+    rawCache.set(url, pending)
+  }
+  return pending
+}
 
-type PathSink = Pick<CanvasRenderingContext2D, 'moveTo' | 'lineTo' | 'quadraticCurveTo' | 'bezierCurveTo' | 'closePath'>
+/* ------------------------------------------------------------- topology */
 
-/*
- * Each outline is the right half, traced clockwise from the top centre down to
- * the bottom centre. The left half is mirrored automatically.
- */
-const OUTLINES: Record<GarmentKind, Outline> = {
-  tee: {
-    start: [0, -0.032],
-    right: [
-      { c: [0.07, -0.032], to: [0.125, 0] },
-      { c: [0.24, -0.022], to: [0.355, -0.062] },
-      { c: [0.45, -0.13], to: [0.52, -0.262] },
-      { to: [0.442, -0.352] },
-      { c: [0.38, -0.305], to: [0.338, -0.295] },
-      { c: [0.34, -0.7], to: [0.35, -1.045] },
-      { c: [0.18, -1.066], to: [0, -1.065] }
-    ]
-  },
-  longsleeve: {
-    start: [0, -0.032],
-    right: [
-      { c: [0.07, -0.032], to: [0.125, 0] },
-      { c: [0.24, -0.022], to: [0.355, -0.062] },
-      { c: [0.47, -0.12], to: [0.49, -0.42] },
-      { to: [0.503, -0.93] },
-      { to: [0.505, -0.985] },
-      { to: [0.418, -0.99] },
-      { to: [0.413, -0.93] },
-      { c: [0.405, -0.55], to: [0.372, -0.31] },
-      { to: [0.345, -0.33] },
-      { c: [0.338, -0.7], to: [0.35, -1.045] },
-      { c: [0.18, -1.066], to: [0, -1.065] }
-    ]
-  },
-  crewneck: {
-    start: [0, -0.034],
-    right: [
-      { c: [0.075, -0.034], to: [0.13, 0] },
-      { c: [0.25, -0.024], to: [0.37, -0.07] },
-      { c: [0.5, -0.13], to: [0.515, -0.42] },
-      { to: [0.53, -0.87] },
-      { to: [0.506, -0.885] },
-      { to: [0.502, -0.95] },
-      { to: [0.428, -0.952] },
-      { to: [0.422, -0.885] },
-      { to: [0.405, -0.87] },
-      { c: [0.412, -0.55], to: [0.395, -0.32] },
-      { to: [0.365, -0.34] },
-      { c: [0.36, -0.7], to: [0.37, -0.93] },
-      { to: [0.346, -0.94] },
-      { to: [0.346, -1.004] },
-      { to: [0, -1.006] }
-    ]
-  },
-  shorts: {
-    start: [0, 0],
-    right: [
-      { to: [0.33, 0] },
-      { to: [0.34, -0.065] },
-      { c: [0.385, -0.3], to: [0.4, -0.59] },
-      { to: [0.392, -0.612] },
-      { c: [0.2, -0.6], to: [0.035, -0.59] },
-      { c: [0.02, -0.42], to: [0, -0.36] }
-    ]
+/** Maps vertices that share a position (UV seams) to one id. */
+function weld(positions: Float32Array) {
+  const ids = new Int32Array(positions.length / 3)
+  const seen = new Map<string, number>()
+  for (let i = 0; i < ids.length; i++) {
+    const key = `${Math.round(positions[i * 3]! * 1e4)},${Math.round(positions[i * 3 + 1]! * 1e4)},${Math.round(positions[i * 3 + 2]! * 1e4)}`
+    let id = seen.get(key)
+    if (id === undefined) {
+      id = i
+      seen.set(key, i)
+    }
+    ids[i] = id
+  }
+  return ids
+}
+
+/** Connected piece of each vertex, and the id of the largest piece. */
+function pieces(ids: Int32Array, indices: Uint32Array) {
+  const parent = Int32Array.from({ length: ids.length }, (_, i) => i)
+  const find = (x: number): number => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]!]!
+      x = parent[x]!
+    }
+    return x
+  }
+  for (let t = 0; t < indices.length; t += 3) {
+    const a = find(ids[indices[t]!]!)
+    parent[find(ids[indices[t + 1]!]!)] = a
+    parent[find(ids[indices[t + 2]!]!)] = a
+  }
+  const piece = Int32Array.from({ length: ids.length }, (_, i) => find(ids[i]!))
+  const size = new Map<number, number>()
+  for (let t = 0; t < indices.length; t += 3) size.set(piece[indices[t]!]!, (size.get(piece[indices[t]!]!) ?? 0) + 1)
+  const largest = [...size.entries()].sort((a, b) => b[1] - a[1])[0]![0]
+  return { piece, largest }
+}
+
+/** Open borders (neck, hem, cuffs) as loops of vertex indices. */
+function borderLoops(ids: Int32Array, indices: Uint32Array) {
+  const edges = new Map<string, [number, number, number]>()
+  for (let t = 0; t < indices.length; t += 3) {
+    for (const [a, b] of [[0, 1], [1, 2], [2, 0]] as const) {
+      const u = ids[indices[t + a]!]!
+      const v = ids[indices[t + b]!]!
+      const key = u < v ? `${u}_${v}` : `${v}_${u}`
+      const e = edges.get(key)
+      if (e) e[2]++
+      else edges.set(key, [u, v, 1])
+    }
+  }
+  const adjacency = new Map<number, number[]>()
+  for (const [u, v, n] of edges.values()) {
+    if (n !== 1) continue
+    if (!adjacency.has(u)) adjacency.set(u, [])
+    if (!adjacency.has(v)) adjacency.set(v, [])
+    adjacency.get(u)!.push(v)
+    adjacency.get(v)!.push(u)
+  }
+  const seen = new Set<number>()
+  const loops: number[][] = []
+  for (const start of adjacency.keys()) {
+    if (seen.has(start)) continue
+    const loop: number[] = []
+    const stack = [start]
+    while (stack.length) {
+      const x = stack.pop()!
+      if (seen.has(x)) continue
+      seen.add(x)
+      loop.push(x)
+      for (const y of adjacency.get(x)!) if (!seen.has(y)) stack.push(y)
+    }
+    loops.push(loop)
+  }
+  return loops
+}
+
+function smoothstep(a: number, b: number, x: number) {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
+  return t * t * (3 - 2 * t)
+}
+
+/* --------------------------------------------------------------- shaping */
+
+export interface GarmentAnchors {
+  /** Lowest point of the front neckline. */
+  neckFront: number
+  /** Highest point of the back neckline. */
+  neckBack: number
+  /** Wearer's left sleeve (viewer's right): shoulder → cuff, for sleeve prints. */
+  sleeve: [THREE.Vector2, THREE.Vector2] | null
+}
+
+export interface GarmentModel {
+  spec: GarmentSpec
+  geometry: THREE.BufferGeometry
+  /** Separate under-layer group (layered garments). */
+  layered: boolean
+  normalMap: THREE.Texture | null
+  normalScale: THREE.Vector2
+  anchors: GarmentAnchors
+  insideAt: (x: number, y: number) => boolean
+  /** Flat silhouette, for 2D previews. */
+  mask: HTMLCanvasElement
+}
+
+const modelCache = new Map<string, Promise<GarmentModel>>()
+
+export function loadGarmentModel(kind: GarmentKind, resolveUrl: (path: string) => string) {
+  const source = SOURCES[kind]
+  const url = resolveUrl(source.path)
+  const key = `${kind}|${url}`
+  let pending = modelCache.get(key)
+  if (!pending) {
+    pending = loadRaw(url).then(raw => shapeGarment(raw, source))
+    modelCache.set(key, pending)
+  }
+  return pending
+}
+
+function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
+  // 1. Pick the pieces we want and compact them.
+  const allIds = weld(raw.positions)
+  const { piece, largest } = pieces(allIds, raw.indices)
+  const keepTri: number[] = []
+  for (let t = 0; t < raw.indices.length; t += 3) {
+    if (source.keep === 'all' || piece[raw.indices[t]!] === largest) keepTri.push(t)
+  }
+  const remap = new Int32Array(raw.positions.length / 3).fill(-1)
+  const src: number[] = []
+  const indices: number[] = []
+  for (const t of keepTri) {
+    for (let k = 0; k < 3; k++) {
+      const v = raw.indices[t + k]!
+      if (remap[v]! < 0) {
+        remap[v] = src.length
+        src.push(v)
+      }
+      indices.push(remap[v]!)
+    }
+  }
+  const n = src.length
+  const P = new Float32Array(n * 3)
+  const uv1 = new Float32Array(n * 2)
+  const under = new Uint8Array(n)
+  src.forEach((v, i) => {
+    P.set(raw.positions.subarray(v * 3, v * 3 + 3), i * 3)
+    uv1.set(raw.uvs.subarray(v * 2, v * 2 + 2), i * 2)
+    under[i] = source.layered && piece[v] === largest ? 1 : 0
+  })
+  const index = Uint32Array.from(indices)
+  const ids = weld(P)
+  const loops = borderLoops(ids, index)
+
+  const centroid = (loop: number[]) => {
+    const c = new THREE.Vector3()
+    for (const i of loop) c.add(new THREE.Vector3(P[i * 3]!, P[i * 3 + 1]!, P[i * 3 + 2]!))
+    return c.divideScalar(loop.length)
+  }
+  const loopInfo = loops.map((loop) => {
+    let minX = Infinity, maxX = -Infinity
+    for (const i of loop) {
+      minX = Math.min(minX, P[i * 3]!)
+      maxX = Math.max(maxX, P[i * 3]!)
+    }
+    return { loop, c: centroid(loop), half: (maxX - minX) / 2, under: under[loop[0]!] === 1 }
+  })
+  const neck = loopInfo.reduce((a, b) => (b.c.y > a.c.y ? b : a))
+  // The hem used for sizing: the lowest centred loop of the base garment.
+  const hems = loopInfo.filter(l => Math.abs(l.c.x) < 0.1 && (!source.layered || l.under))
+  const hem = hems.reduce((a, b) => (b.c.y < a.c.y ? b : a))
+
+  // 2. Face the front towards +z: the front neckline dips lower than the back.
+  let lowest = neck.loop[0]!
+  for (const i of neck.loop) if (P[i * 3 + 1]! < P[lowest * 3 + 1]!) lowest = i
+  const flip = P[lowest * 3 + 2]! < neck.c.z ? -1 : 1
+
+  // 3. Into garment space: torso widened to lie flat, sleeves carried outwards unscaled.
+  const s = TORSO / (hem.half * FLATTEN_X)
+  let top = -Infinity
+  for (let i = 0; i < n; i++) top = Math.max(top, P[i * 3 + 1]!)
+  const edge = hem.half * 1.05
+  const X = new Float32Array(n)
+  const Y = new Float32Array(n)
+  const Z = new Float32Array(n)
+  for (let i = 0; i < n; i++) {
+    const x = (P[i * 3]! - hem.c.x) * flip
+    const ax = Math.abs(x)
+    const wide = ax <= edge ? ax * FLATTEN_X : edge * FLATTEN_X + (ax - edge)
+    X[i] = Math.sign(x) * wide * s
+    Y[i] = (P[i * 3 + 1]! - top) * s
+    Z[i] = (P[i * 3 + 2]! - hem.c.z) * flip
+  }
+
+  // 4. Flatten: per height, centre the torso and scale its depth to a target.
+  let minY = 0
+  for (let i = 0; i < n; i++) minY = Math.min(minY, Y[i]!)
+  const bins = 48
+  const lo = new Float32Array(bins).fill(Infinity)
+  const hi = new Float32Array(bins).fill(-Infinity)
+  const bin = (y: number) => Math.min(bins - 1, Math.max(0, Math.floor((y / minY) * bins)))
+  for (let i = 0; i < n; i++) {
+    if (Math.abs(X[i]!) > TORSO * 0.8) continue
+    const b = bin(Y[i]!)
+    lo[b] = Math.min(lo[b]!, Z[i]!)
+    hi[b] = Math.max(hi[b]!, Z[i]!)
+  }
+  const centre = new Float32Array(bins)
+  const half = new Float32Array(bins)
+  for (let b = 0; b < bins; b++) {
+    let k = b
+    while (k < bins && !Number.isFinite(lo[k]!)) k++
+    if (k === bins) {
+      k = b
+      while (k > 0 && !Number.isFinite(lo[k]!)) k--
+    }
+    centre[b] = (lo[k]! + hi[k]!) / 2
+    half[b] = Math.max(0.02, (hi[k]! - lo[k]!) / 2)
+  }
+  const smooth = (a: Float32Array) => a.map((_, b) => (a[Math.max(0, b - 1)]! + a[b]! * 2 + a[Math.min(bins - 1, b + 1)]!) / 4)
+  const centreS = smooth(centre)
+  const halfS = smooth(half)
+  for (let i = 0; i < n; i++) {
+    const b = bin(Y[i]!)
+    const target = THREE.MathUtils.lerp(0.034, 0.02, smoothstep(0.05, 0.35, -Y[i]!))
+    let z = ((Z[i]! - centreS[b]!) / halfS[b]!) * target
+    // Keep an outer layer clear of the one beneath it.
+    if (source.layered && !under[i]) z += Math.sign(z) * 0.003
+    Z[i] = z
+  }
+
+  // 5. Let the sleeves hang: swing them down about the shoulders.
+  let shoulderY = -Infinity
+  for (let i = 0; i < n; i++) if (Math.abs(Math.abs(X[i]!) - TORSO) < 0.04) shoulderY = Math.max(shoulderY, Y[i]!)
+  const pivotY = shoulderY - 0.04
+  for (let i = 0; i < n; i++) {
+    const ax = Math.abs(X[i]!)
+    const w = smoothstep(TORSO - 0.01, TORSO + 0.12, ax)
+    if (!w) continue
+    const side = Math.sign(X[i]!)
+    const angle = -side * source.sleeveDrop * w
+    const dx = X[i]! - side * (TORSO - 0.02)
+    const dy = Y[i]! - pivotY
+    X[i] = side * (TORSO - 0.02) + dx * Math.cos(angle) - dy * Math.sin(angle)
+    Y[i] = pivotY + dx * Math.sin(angle) + dy * Math.cos(angle)
+  }
+
+  // Extents (symmetric about x = 0) and the flat silhouette.
+  let maxX = 0
+  minY = 0
+  for (let i = 0; i < n; i++) {
+    maxX = Math.max(maxX, Math.abs(X[i]!))
+    minY = Math.min(minY, Y[i]!)
+  }
+  const width = maxX * 2 + 0.02
+  const height = -minY + 0.01
+  const maskW = 256
+  const maskH = Math.round(maskW * height / width)
+  const mask = document.createElement('canvas')
+  mask.width = maskW
+  mask.height = maskH
+  const mctx = mask.getContext('2d', { willReadFrequently: true })!
+  const toMask = (x: number, y: number): [number, number] => [((x + width / 2) / width) * maskW, (-y / height) * maskH]
+  mctx.fillStyle = '#000'
+  mctx.strokeStyle = '#000'
+  mctx.lineWidth = 1
+  mctx.beginPath()
+  for (let t = 0; t < index.length; t += 3) {
+    const a = toMask(X[index[t]!]!, Y[index[t]!]!)
+    const b = toMask(X[index[t + 1]!]!, Y[index[t + 1]!]!)
+    const c = toMask(X[index[t + 2]!]!, Y[index[t + 2]!]!)
+    mctx.moveTo(a[0], a[1])
+    mctx.lineTo(b[0], b[1])
+    mctx.lineTo(c[0], c[1])
+    mctx.closePath()
+  }
+  mctx.fill()
+  mctx.stroke()
+  const alpha = mctx.getImageData(0, 0, maskW, maskH).data
+  const insideAt = (x: number, y: number) => {
+    const [mx, my] = toMask(x, y)
+    const px = Math.floor(mx)
+    const py = Math.floor(my)
+    if (px < 0 || py < 0 || px >= maskW || py >= maskH) return false
+    return alpha[(py * maskW + px) * 4 + 3]! > 127
+  }
+  const topAt = (x: number) => {
+    const px = Math.min(maskW - 1, Math.max(0, Math.floor(toMask(x, 0)[0])))
+    for (let py = 0; py < maskH; py++) if (alpha[(py * maskW + px) * 4 + 3]! > 127) return -(py / maskH) * height
+    return -height
+  }
+
+  // 6. Sit the shoulders just over the hanger.
+  const shoulderTop = (topAt(0.2) + topAt(-0.2)) / 2
+  const drop = shoulderTop - hangerTopAt(0.2) - 0.012
+
+  // 7. Anchors for prints.
+  let neckFront = 0
+  let neckBack = -Infinity
+  for (const i of neck.loop) {
+    if (Z[i]! >= 0) neckFront = Math.min(neckFront, Y[i]!)
+    else neckBack = Math.max(neckBack, Y[i]!)
+  }
+  if (!Number.isFinite(neckBack)) neckBack = 0
+  const cuffs = loopInfo
+    .filter(l => !source.layered || l.under)
+    .map(l => ({ ...l, x: l.loop.reduce((sum, i) => sum + X[i]!, 0) / l.loop.length, y: l.loop.reduce((sum, i) => sum + Y[i]!, 0) / l.loop.length }))
+    .filter(l => l.x > TORSO)
+    .sort((a, b) => b.x - a.x)
+  const sleeve: [THREE.Vector2, THREE.Vector2] | null = cuffs[0]
+    ? [new THREE.Vector2(TORSO + 0.02, pivotY), new THREE.Vector2(cuffs[0].x, cuffs[0].y)]
+    : null
+
+  // 8. Normals smoothed across UV seams, after all reshaping. Faces must wind
+  //    outwards (the shader shades inward-facing fabric as the inside).
+  const pa = new THREE.Vector3(), pb = new THREE.Vector3(), pc = new THREE.Vector3()
+  const faceNormal = (t: number) => {
+    const [a, b, c] = [index[t]!, index[t + 1]!, index[t + 2]!]
+    pa.set(X[a]!, Y[a]!, Z[a]!)
+    pb.set(X[b]!, Y[b]!, Z[b]!)
+    pc.set(X[c]!, Y[c]!, Z[c]!)
+    return pb.sub(pa).cross(pc.sub(pa))
+  }
+  let outward = 0
+  for (let t = 0; t < index.length; t += 3) {
+    const [a, b, c] = [index[t]!, index[t + 1]!, index[t + 2]!]
+    const z = Z[a]! + Z[b]! + Z[c]!
+    if (Math.abs(X[a]!) < 0.2 && !under[a]) outward += Math.sign(z) * Math.sign(faceNormal(t).z)
+  }
+  if (outward < 0) {
+    for (let t = 0; t < index.length; t += 3) {
+      const b = index[t + 1]!
+      index[t + 1] = index[t + 2]!
+      index[t + 2] = b
+    }
+  }
+  const normals = new Float32Array(n * 3)
+  const acc = new Float32Array(n * 3)
+  for (let t = 0; t < index.length; t += 3) {
+    const [a, b, c] = [index[t]!, index[t + 1]!, index[t + 2]!]
+    const f = faceNormal(t)
+    for (const v of [a, b, c]) {
+      const w = ids[v]!
+      acc[w * 3] = acc[w * 3]! + f.x
+      acc[w * 3 + 1] = acc[w * 3 + 1]! + f.y
+      acc[w * 3 + 2] = acc[w * 3 + 2]! + f.z
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    const w = ids[i]!
+    const v = new THREE.Vector3(acc[w * 3]!, acc[w * 3 + 1]!, acc[w * 3 + 2]!).normalize()
+    normals.set([v.x, v.y, v.z], i * 3)
+  }
+
+  // 9. Assemble: planar uv for our prints, uv1 for the model's normal map, cloth binding.
+  const grid = clothGrid(width, height)
+  const positions: number[] = []
+  const nrm: number[] = []
+  const uv: number[] = []
+  const uvModel: number[] = []
+  const gridCoords: number[] = []
+  const shells: number[] = []
+  const groups: number[][] = [[], [], []]
+  const out = [new Int32Array(n).fill(-1), new Int32Array(n).fill(-1), new Int32Array(n).fill(-1)]
+  const vertex = (i: number, group: number) => {
+    const map = out[group]!
+    if (map[i]! >= 0) return map[i]!
+    const k = positions.length / 3
+    positions.push(X[i]!, Y[i]!, Z[i]!)
+    nrm.push(normals[i * 3]!, normals[i * 3 + 1]!, normals[i * 3 + 2]!)
+    const u = (X[i]! + width / 2) / width
+    uv.push(group === 1 ? 1 - u : u, 1 + Y[i]! / height)
+    uvModel.push(uv1[i * 2]!, uv1[i * 2 + 1]!)
+    gridCoords.push((X[i]! + width / 2) / grid.cell, -Y[i]! / grid.cell)
+    shells.push(Z[i]!)
+    map[i] = k
+    return k
+  }
+  for (let t = 0; t < index.length; t += 3) {
+    const tri = [index[t]!, index[t + 1]!, index[t + 2]!]
+    const group = under[tri[0]!] ? 2 : (Z[tri[0]!]! + Z[tri[1]!]! + Z[tri[2]!]! >= 0 ? 0 : 1)
+    groups[group]!.push(...tri.map(i => vertex(i, group)))
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+  geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(uvModel, 2))
+  geometry.setAttribute('aGrid', new THREE.Float32BufferAttribute(gridCoords, 2))
+  geometry.setAttribute('aShell', new THREE.Float32BufferAttribute(shells, 1))
+  geometry.setIndex(groups.flat())
+  let start = 0
+  groups.forEach((g, i) => {
+    geometry.addGroup(start, g.length, i)
+    start += g.length
+  })
+  geometry.computeBoundingSphere()
+
+  return {
+    spec: { width, height, drop, body: TORSO, shoulder: 0.33 },
+    geometry,
+    layered: !!source.layered,
+    normalMap: raw.normalMap,
+    normalScale: raw.normalScale,
+    anchors: { neckFront, neckBack, sleeve },
+    insideAt,
+    mask
   }
 }
 
-function traceOutline(p: PathSink, kind: GarmentKind) {
-  const { start, right } = OUTLINES[kind]
-  p.moveTo(start[0], start[1])
-  for (const s of right) {
-    if (s.c) p.quadraticCurveTo(s.c[0], s.c[1], s.to[0], s.to[1])
-    else p.lineTo(s.to[0], s.to[1])
-  }
-  // Mirror back up the left side, reversing each segment.
-  for (let i = right.length - 1; i >= 0; i--) {
-    const s = right[i]!
-    const from = i === 0 ? start : right[i - 1]!.to
-    if (s.c) p.quadraticCurveTo(-s.c[0], s.c[1], -from[0], from[1])
-    else p.lineTo(-from[0], from[1])
-  }
-  p.closePath()
-}
-
-/* ------------------------------------------------------------------ colour */
-
-function lightness(hex: string) {
-  return new THREE.Color(hex).getHSL({ h: 0, s: 0, l: 0 }).l
-}
-
-function shade(hex: string, amount: number) {
-  const c = new THREE.Color(hex)
-  const hsl = { h: 0, s: 0, l: 0 }
-  c.getHSL(hsl)
-  // Light fabrics darken for seams; dark fabrics lift slightly instead.
-  const l = hsl.l > 0.18 ? hsl.l * amount : Math.min(1, hsl.l + (1 - amount) * 0.35)
-  c.setHSL(hsl.h, hsl.s, l)
-  return `#${c.getHexString()}`
-}
-
-function stitchColor(hex: string) {
-  return lightness(hex) > 0.5 ? 'rgba(0,0,0,0.2)' : 'rgba(255,255,255,0.16)'
-}
-
-/* ------------------------------------------------------------------ canvas */
+/* ---------------------------------------------------------------- canvas */
 
 let knitCanvas: HTMLCanvasElement | null = null
 
@@ -176,22 +564,8 @@ export function getKnitCanvas() {
   return canvas
 }
 
-function createCanvas(spec: GarmentSpec) {
-  const canvas = document.createElement('canvas')
-  canvas.width = TEXTURE_WIDTH
-  canvas.height = Math.round(TEXTURE_WIDTH * spec.height / spec.width)
-  return canvas
-}
-
-/** Maps garment space to canvas pixels so paths and line widths are in garment units. */
-function useGarmentSpace(ctx: CanvasRenderingContext2D, spec: GarmentSpec) {
-  const s = ctx.canvas.width / spec.width
-  ctx.setTransform(s, 0, 0, -s, (spec.width / 2) * s, 0)
-}
-
-function toPixels(ctx: CanvasRenderingContext2D, spec: GarmentSpec, x0: number, y0: number, x1: number, y1: number) {
-  const s = ctx.canvas.width / spec.width
-  return { x: (x0 + spec.width / 2) * s, y: -y0 * s, w: (x1 - x0) * s, h: (y0 - y1) * s }
+function lightness(hex: string) {
+  return new THREE.Color(hex).getHSL({ h: 0, s: 0, l: 0 }).l
 }
 
 type Drawable = CanvasImageSource & { width: number, height: number }
@@ -221,269 +595,6 @@ function applyGrain(ctx: CanvasRenderingContext2D) {
   ctx.restore()
 }
 
-function stroke(ctx: CanvasRenderingContext2D, color: string, width: number, draw: () => void, dash?: number[]) {
-  ctx.save()
-  ctx.strokeStyle = color
-  ctx.lineWidth = width
-  ctx.lineCap = 'round'
-  if (dash) ctx.setLineDash(dash)
-  ctx.beginPath()
-  draw()
-  ctx.stroke()
-  ctx.restore()
-}
-
-const STITCH = [0.011, 0.007]
-
-/** Both halves: calls `draw` for the right side and again mirrored. */
-function mirrored(ctx: CanvasRenderingContext2D, draw: () => void) {
-  draw()
-  ctx.save()
-  ctx.scale(-1, 1)
-  draw()
-  ctx.restore()
-}
-
-function drawCollar(ctx: CanvasRenderingContext2D, color: string, side: 'front' | 'back', heavy: boolean) {
-  const outer = heavy ? 0.13 : 0.125
-  if (side === 'front') {
-    // The inside of the back panel, seen through the neck opening.
-    ctx.save()
-    ctx.fillStyle = shade(color, 0.7)
-    ctx.beginPath()
-    ctx.moveTo(-outer, 0)
-    ctx.quadraticCurveTo(-0.07, -0.032, 0, -0.032)
-    ctx.quadraticCurveTo(0.07, -0.032, outer, 0)
-    ctx.bezierCurveTo(outer - 0.01, -0.07, 0.06, -0.092, 0, -0.092)
-    ctx.bezierCurveTo(-0.06, -0.092, -(outer - 0.01), -0.07, -outer, 0)
-    ctx.fill()
-    ctx.restore()
-    stroke(ctx, shade(color, 0.9), heavy ? 0.042 : 0.03, () => {
-      ctx.moveTo(-outer, 0)
-      ctx.bezierCurveTo(-(outer - 0.01), -0.07, -0.06, -0.092, 0, -0.092)
-      ctx.bezierCurveTo(0.06, -0.092, outer - 0.01, -0.07, outer, 0)
-    })
-    stroke(ctx, 'rgba(0,0,0,0.12)', 0.003, () => {
-      const o = heavy ? 0.022 : 0.016
-      ctx.moveTo(-(outer + o), 0)
-      ctx.bezierCurveTo(-(outer + o - 0.012), -0.085 - o * 0.5, -0.07, -0.092 - o, 0, -0.092 - o)
-      ctx.bezierCurveTo(0.07, -0.092 - o, outer + o - 0.012, -0.085 - o * 0.5, outer + o, 0)
-    })
-  } else {
-    stroke(ctx, shade(color, 0.9), heavy ? 0.034 : 0.024, () => {
-      ctx.moveTo(-outer, 0)
-      ctx.quadraticCurveTo(-0.07, -0.032, 0, -0.032)
-      ctx.quadraticCurveTo(0.07, -0.032, outer, 0)
-    })
-  }
-}
-
-/** Vertical ribbing inside a band (cuffs, waistbands on sweatshirts). */
-function ribBand(ctx: CanvasRenderingContext2D, x0: number, x1: number, y0: number, y1: number, color: string) {
-  ctx.save()
-  ctx.fillStyle = shade(color, 0.93)
-  ctx.fillRect(x0, y1, x1 - x0, y0 - y1)
-  ctx.strokeStyle = 'rgba(0,0,0,0.1)'
-  ctx.lineWidth = 0.0028
-  ctx.beginPath()
-  for (let x = x0 + 0.006; x < x1; x += 0.011) {
-    ctx.moveTo(x, y0 - 0.004)
-    ctx.lineTo(x, y1 + 0.004)
-  }
-  ctx.stroke()
-  ctx.restore()
-}
-
-function drawTopDetails(ctx: CanvasRenderingContext2D, kind: GarmentKind, color: string, side: 'front' | 'back') {
-  const stitches = stitchColor(color)
-  drawCollar(ctx, color, side, kind === 'crewneck')
-
-  if (kind === 'tee') {
-    mirrored(ctx, () => {
-      stroke(ctx, 'rgba(0,0,0,0.1)', 0.004, () => {
-        ctx.moveTo(0.355, -0.062)
-        ctx.quadraticCurveTo(0.31, -0.17, 0.338, -0.295)
-      })
-      stroke(ctx, stitches, 0.0032, () => {
-        ctx.moveTo(0.497, -0.243)
-        ctx.lineTo(0.42, -0.333)
-      }, STITCH)
-    })
-    stroke(ctx, stitches, 0.0032, () => {
-      ctx.moveTo(-0.35, -1.012)
-      ctx.quadraticCurveTo(0, -1.035, 0.35, -1.012)
-    }, STITCH)
-  } else if (kind === 'longsleeve') {
-    mirrored(ctx, () => {
-      stroke(ctx, 'rgba(0,0,0,0.1)', 0.004, () => {
-        ctx.moveTo(0.355, -0.062)
-        ctx.quadraticCurveTo(0.33, -0.18, 0.36, -0.315)
-      })
-      stroke(ctx, stitches, 0.0032, () => {
-        ctx.moveTo(0.5, -0.93)
-        ctx.lineTo(0.414, -0.93)
-      }, STITCH)
-    })
-    stroke(ctx, stitches, 0.0032, () => {
-      ctx.moveTo(-0.35, -1.012)
-      ctx.quadraticCurveTo(0, -1.035, 0.35, -1.012)
-    }, STITCH)
-  } else if (kind === 'crewneck') {
-    mirrored(ctx, () => {
-      stroke(ctx, 'rgba(0,0,0,0.12)', 0.005, () => {
-        ctx.moveTo(0.37, -0.07)
-        ctx.quadraticCurveTo(0.35, -0.2, 0.38, -0.33)
-      })
-      ribBand(ctx, 0.42, 0.508, -0.885, -0.952, color)
-    })
-    ribBand(ctx, -0.35, 0.35, -0.94, -1.01, color)
-    if (side === 'front') {
-      // Classic sweatshirt V-insert under the collar.
-      stroke(ctx, 'rgba(0,0,0,0.1)', 0.004, () => {
-        ctx.moveTo(-0.03, -0.11)
-        ctx.lineTo(0, -0.15)
-        ctx.lineTo(0.03, -0.11)
-      })
-    }
-  }
-}
-
-function drawShortsDetails(ctx: CanvasRenderingContext2D, color: string, side: 'front' | 'back') {
-  const stitches = stitchColor(color)
-  ctx.save()
-  ctx.fillStyle = shade(color, 0.93)
-  ctx.fillRect(-0.34, -0.066, 0.68, 0.066)
-  ctx.restore()
-  stroke(ctx, stitches, 0.0032, () => {
-    ctx.moveTo(-0.338, -0.07)
-    ctx.lineTo(0.338, -0.07)
-  }, STITCH)
-  if (side === 'front') {
-    const cord = lightness(color) > 0.5 ? '#2b2b2b' : '#f1ece0'
-    stroke(ctx, cord, 0.009, () => {
-      ctx.moveTo(-0.022, -0.036)
-      ctx.bezierCurveTo(-0.03, -0.09, -0.05, -0.12, -0.04, -0.18)
-      ctx.moveTo(0.022, -0.036)
-      ctx.bezierCurveTo(0.03, -0.09, 0.02, -0.14, 0.034, -0.195)
-    })
-    stroke(ctx, stitches, 0.0032, () => {
-      ctx.moveTo(0.032, -0.072)
-      ctx.lineTo(0.032, -0.25)
-      ctx.quadraticCurveTo(0.03, -0.3, 0.004, -0.31)
-    }, STITCH)
-  }
-  stroke(ctx, stitches, 0.0032, () => {
-    ctx.moveTo(0.04, -0.562)
-    ctx.quadraticCurveTo(0.2, -0.572, 0.39, -0.583)
-    ctx.moveTo(-0.04, -0.562)
-    ctx.quadraticCurveTo(-0.2, -0.572, -0.39, -0.583)
-  }, STITCH)
-}
-
-/**
- * Soft baked shading that a photographed garment would have: the sides
- * turning away, drag lines from the hanger tips, creases at the armpits,
- * a shadow under the collar and gentle vertical folds towards the hem.
- */
-function drawShading(ctx: CanvasRenderingContext2D, spec: GarmentSpec, kind: GarmentKind, color: string, seed: number) {
-  const px = ctx.canvas.width / spec.width
-  const dark = lightness(color) < 0.2
-  const shadow = dark ? 'rgba(0,0,0,0.35)' : 'rgba(20,16,10,0.16)'
-  const light = dark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.22)'
-  const b = spec.body
-
-  ctx.save()
-  // Sides falling away from the light.
-  const side = ctx.createLinearGradient(-b, 0, b, 0)
-  side.addColorStop(0, shadow)
-  side.addColorStop(0.16, 'rgba(0,0,0,0)')
-  side.addColorStop(0.8, 'rgba(0,0,0,0)')
-  side.addColorStop(1, shadow)
-  ctx.globalAlpha = 0.75
-  ctx.fillStyle = side
-  ctx.fillRect(-b - 0.01, -spec.height, 2 * b + 0.02, spec.height)
-  ctx.globalAlpha = 1
-
-  if (kind === 'shorts') {
-    ctx.restore()
-    return
-  }
-
-  ctx.filter = `blur(${Math.round(0.012 * px)}px)`
-  // Drag lines from the hanger tips towards the chest and armpits.
-  mirrored(ctx, () => {
-    stroke(ctx, shadow, 0.018, () => {
-      ctx.moveTo(spec.shoulder - 0.02, -0.07)
-      ctx.quadraticCurveTo(spec.shoulder - 0.06, -0.2, b - 0.03, -0.33)
-    })
-    stroke(ctx, light, 0.014, () => {
-      ctx.moveTo(spec.shoulder - 0.05, -0.06)
-      ctx.quadraticCurveTo(0.22, -0.16, 0.18, -0.3)
-    })
-    stroke(ctx, shadow, 0.012, () => {
-      ctx.moveTo(spec.shoulder - 0.08, -0.065)
-      ctx.quadraticCurveTo(0.2, -0.13, 0.13, -0.2)
-    })
-  })
-  // Under-collar shadow.
-  stroke(ctx, shadow, 0.02, () => {
-    ctx.moveTo(-0.14, -0.04)
-    ctx.bezierCurveTo(-0.12, -0.11, 0.12, -0.11, 0.14, -0.04)
-  })
-  // Vertical folds that deepen towards the hem.
-  const rand = (n: number) => {
-    const x = Math.sin((seed + n) * 91.7) * 43758.5453
-    return x - Math.floor(x)
-  }
-  for (let i = 0; i < 5; i++) {
-    const x = (rand(i) - 0.5) * 1.3 * b
-    const top = -0.38 - rand(i + 9) * 0.25
-    stroke(ctx, i % 2 ? light : shadow, 0.012 + rand(i + 3) * 0.012, () => {
-      ctx.moveTo(x, top)
-      ctx.quadraticCurveTo(x + (rand(i + 5) - 0.5) * 0.06, (top - spec.height) / 2, x + (rand(i + 7) - 0.5) * 0.05, -spec.height)
-    })
-  }
-  ctx.restore()
-}
-
-/** Small screen-printed label under the back collar. */
-function drawBackNeckPrint(ctx: CanvasRenderingContext2D, spec: GarmentSpec, product: Product) {
-  const ink = lightness(product.color) > 0.5 ? 'rgba(39,48,79,0.85)' : 'rgba(241,236,224,0.9)'
-  const s = ctx.canvas.width / spec.width
-  const top = isTop(product.garment) ? 0.075 : 0.105
-  ctx.save()
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.fillStyle = ink
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'top'
-  const cx = ctx.canvas.width / 2
-  ctx.font = `600 ${Math.round(0.03 * s)}px "Instrument Sans", system-ui, sans-serif`
-  ctx.letterSpacing = `${Math.round(0.006 * s)}px`
-  ctx.fillText('NAIJA THREADS', cx, top * s)
-  ctx.font = `500 ${Math.round(0.019 * s)}px "Instrument Sans", system-ui, sans-serif`
-  ctx.fillText('NIGERIA @ 66 · 1960—2026', cx, (top + 0.042) * s)
-  ctx.restore()
-}
-
-/** Text printed down the wearer's left sleeve (viewer's right). */
-function drawSleevePrint(ctx: CanvasRenderingContext2D, spec: GarmentSpec, product: Product) {
-  if (!product.sleeve) return
-  const ink = lightness(product.color) > 0.5 ? 'rgba(39,48,79,0.9)' : 'rgba(241,236,224,0.92)'
-  const s = ctx.canvas.width / spec.width
-  const p = toPixels(ctx, spec, 0.458, -0.6, 0.458, -0.6)
-  ctx.save()
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.translate(p.x, p.y)
-  ctx.rotate(Math.PI / 2 - 0.02)
-  ctx.fillStyle = ink
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.font = `600 ${Math.round(0.03 * s)}px "Instrument Sans", system-ui, sans-serif`
-  ctx.letterSpacing = `${Math.round(0.008 * s)}px`
-  ctx.fillText(product.sleeve.toUpperCase(), 0, 0)
-  ctx.restore()
-}
-
 async function loadImage(src: string) {
   const img = new Image()
   img.decoding = 'async'
@@ -492,292 +603,89 @@ async function loadImage(src: string) {
   return img
 }
 
-/** Crops transparent margins from a mockup photo so its garment fills the frame. */
-function trimTransparent(img: HTMLImageElement) {
-  const probe = document.createElement('canvas')
-  const scale = Math.min(1, 256 / Math.max(img.width, img.height))
-  probe.width = Math.max(1, Math.round(img.width * scale))
-  probe.height = Math.max(1, Math.round(img.height * scale))
-  const ctx = probe.getContext('2d', { willReadFrequently: true })!
-  ctx.drawImage(img, 0, 0, probe.width, probe.height)
-  const { data } = ctx.getImageData(0, 0, probe.width, probe.height)
-  let minX = probe.width, minY = probe.height, maxX = -1, maxY = -1
-  let r = 0, g = 0, b = 0, n = 0
-  for (let y = 0; y < probe.height; y++) {
-    for (let x = 0; x < probe.width; x++) {
-      const i = (y * probe.width + x) * 4
-      if (data[i + 3]! > 24) {
-        minX = Math.min(minX, x)
-        maxX = Math.max(maxX, x)
-        minY = Math.min(minY, y)
-        maxY = Math.max(maxY, y)
-        r += data[i]!
-        g += data[i + 1]!
-        b += data[i + 2]!
-        n++
-      }
-    }
-  }
-  if (maxX < 0) return { sx: 0, sy: 0, sw: img.width, sh: img.height, average: '#cccccc' }
-  const toHex = (v: number) => Math.round(v / n).toString(16).padStart(2, '0')
-  return {
-    sx: minX / scale,
-    sy: minY / scale,
-    sw: (maxX - minX + 1) / scale,
-    sh: (maxY - minY + 1) / scale,
-    average: `#${toHex(r)}${toHex(g)}${toHex(b)}`
-  }
-}
+const TEXTURE_WIDTH = 1024
 
 export interface GarmentCanvases {
-  spec: GarmentSpec
   front: HTMLCanvasElement
   back: HTMLCanvasElement
 }
 
-function hashSeed(id: string) {
-  let h = 2166136261
-  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619)
-  return (h >>> 0) / 4294967295
-}
-
-/**
- * Paints the front and back panels of a garment. The canvas alpha is the
- * garment silhouette, which the mesh builder later turns into 3D.
- */
-export async function paintGarment(product: Product, imageUrl: string): Promise<GarmentCanvases> {
-  const base = GARMENT_SPECS[product.garment]
+/** Paints the front and back of a garment: fabric, prints and knit grain. */
+export async function paintGarment(product: Product, model: GarmentModel, imageUrl: string): Promise<GarmentCanvases> {
   const [img] = await Promise.all([
     loadImage(imageUrl).catch(() => null),
     document.fonts?.load('600 32px "Instrument Sans"').catch(() => null)
   ])
+  const { spec, anchors } = model
+  const px = TEXTURE_WIDTH / spec.width
+  const rect = (x0: number, y0: number, x1: number, y1: number) => ({
+    x: (x0 + spec.width / 2) * px,
+    y: -y0 * px,
+    w: (x1 - x0) * px,
+    h: (y0 - y1) * px
+  })
+  const ink = lightness(product.color) > 0.5 ? 'rgba(39,48,79,0.88)' : 'rgba(241,236,224,0.92)'
 
-  if (product.placement === 'mockup' && img) {
-    const crop = trimTransparent(img)
-    const spec: GarmentSpec = { ...base, height: base.width * crop.sh / crop.sw }
-    const front = createCanvas(spec)
-    const back = createCanvas(spec)
-    const fctx = front.getContext('2d')!
-    fctx.drawImage(img, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, front.width, front.height)
-    const bctx = back.getContext('2d')!
-    // The back panel is painted as seen from behind, i.e. mirrored.
-    bctx.setTransform(-1, 0, 0, 1, back.width, 0)
-    bctx.drawImage(front, 0, 0)
-    bctx.setTransform(1, 0, 0, 1, 0, 0)
-    bctx.globalCompositeOperation = 'source-in'
-    bctx.fillStyle = crop.average
-    bctx.fillRect(0, 0, back.width, back.height)
-    return { spec, front, back }
-  }
-
-  const spec = base
-  const kind = product.garment
-  const seed = hashSeed(product.id)
-  const paint = (canvas: HTMLCanvasElement, side: 'front' | 'back') => {
+  const paint = (side: 'front' | 'back') => {
+    const canvas = document.createElement('canvas')
+    canvas.width = TEXTURE_WIDTH
+    canvas.height = Math.round(TEXTURE_WIDTH * spec.height / spec.width)
     const ctx = canvas.getContext('2d')!
-    useGarmentSpace(ctx, spec)
-    ctx.beginPath()
-    traceOutline(ctx, kind)
-    ctx.clip()
     ctx.fillStyle = product.color
-    ctx.fillRect(-spec.width, -spec.height * 2, spec.width * 2, spec.height * 3)
-
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
     const allOver = product.placement === 'full' && img
-    if (allOver) {
-      ctx.save()
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
-      drawCover(ctx, img)
-      ctx.restore()
-    }
+    if (allOver) drawCover(ctx, img)
 
-    if (isTop(kind)) drawTopDetails(ctx, kind, product.color, side)
-    else drawShortsDetails(ctx, product.color, side)
-
+    ctx.fillStyle = ink
+    ctx.textAlign = 'center'
     if (side === 'back') {
-      drawBackNeckPrint(ctx, spec, product)
+      // Small screen-printed label under the back collar.
+      const y = (-anchors.neckBack + 0.06) * px
+      ctx.textBaseline = 'top'
+      ctx.font = `600 ${Math.round(0.03 * px)}px "Instrument Sans", system-ui, sans-serif`
+      ctx.letterSpacing = `${Math.round(0.006 * px)}px`
+      ctx.fillText('NAIJA THREADS', canvas.width / 2, y)
+      ctx.font = `500 ${Math.round(0.019 * px)}px "Instrument Sans", system-ui, sans-serif`
+      ctx.fillText('NIGERIA @ 66 · 1960—2026', canvas.width / 2, y + 0.042 * px)
     } else {
-      if (isTop(kind)) drawSleevePrint(ctx, spec, product)
-      if (img && !allOver) {
+      if (product.sleeve && anchors.sleeve) {
+        // Printed down the wearer's left sleeve.
+        const [a, b] = anchors.sleeve
+        const mid = a.clone().lerp(b, 0.55)
+        const r = rect(mid.x, mid.y, mid.x, mid.y)
         ctx.save()
-        ctx.setTransform(1, 0, 0, 1, 0, 0)
-        if (product.placement === 'leg') {
-          // Wearer's right leg = viewer's left.
-          drawContain(ctx, img, toPixels(ctx, spec, -0.335, -0.4, -0.185, -0.55))
-        } else if (product.placement === 'pocket') {
-          // Wearer's left chest = viewer's right.
-          drawContain(ctx, img, toPixels(ctx, spec, 0.08, -0.16, 0.24, -0.32))
-        } else {
-          const top = kind === 'shorts' ? -0.12 : -0.17
-          const size = kind === 'shorts' ? 0.3 : kind === 'crewneck' ? 0.5 : 0.46
-          drawContain(ctx, img, toPixels(ctx, spec, -size / 2, top, size / 2, top - size))
-        }
+        ctx.translate(r.x, r.y)
+        ctx.rotate(Math.atan2(-(b.y - a.y), b.x - a.x))
+        ctx.textBaseline = 'middle'
+        ctx.font = `600 ${Math.round(0.028 * px)}px "Instrument Sans", system-ui, sans-serif`
+        ctx.letterSpacing = `${Math.round(0.008 * px)}px`
+        ctx.fillText(product.sleeve.toUpperCase(), 0, 0)
         ctx.restore()
       }
+      if (img && !allOver) {
+        const top = anchors.neckFront - 0.075
+        if (product.placement === 'pocket') drawContain(ctx, img, rect(0.07, top - 0.02, 0.22, top - 0.17))
+        else drawContain(ctx, img, rect(-0.23, top, 0.23, top - 0.46))
+      }
     }
-    drawShading(ctx, spec, kind, product.color, side === 'front' ? seed : seed + 0.5)
+    ctx.letterSpacing = '0px'
     applyGrain(ctx)
+    return canvas
   }
 
-  const front = createCanvas(spec)
-  const back = createCanvas(spec)
-  paint(front, 'front')
-  paint(back, 'back')
-  return { spec, front, back }
+  return { front: paint('front'), back: paint('back') }
 }
 
-/* -------------------------------------------------------------- geometry */
-
-const MASK_WIDTH = 192
-
-/** Approximate Euclidean distance (in pixels) from each inside pixel to the outline. */
-function distanceField(canvas: HTMLCanvasElement, width: number, height: number) {
-  const probe = document.createElement('canvas')
-  probe.width = width
-  probe.height = height
-  const ctx = probe.getContext('2d', { willReadFrequently: true })!
-  ctx.drawImage(canvas, 0, 0, width, height)
-  const { data } = ctx.getImageData(0, 0, width, height)
-  const d = new Float32Array(width * height)
-  for (let i = 0; i < d.length; i++) d[i] = data[i * 4 + 3]! > 127 ? 1e6 : 0
-  const D = Math.SQRT2
-  const at = (x: number, y: number) => (x < 0 || y < 0 || x >= width || y >= height) ? 0 : d[y * width + x]!
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const i = y * width + x
-      if (d[i] === 0) continue
-      d[i] = Math.min(d[i]!, at(x - 1, y) + 1, at(x, y - 1) + 1, at(x - 1, y - 1) + D, at(x + 1, y - 1) + D)
-    }
-  }
-  for (let y = height - 1; y >= 0; y--) {
-    for (let x = width - 1; x >= 0; x--) {
-      const i = y * width + x
-      if (d[i] === 0) continue
-      d[i] = Math.min(d[i]!, at(x + 1, y) + 1, at(x, y + 1) + 1, at(x + 1, y + 1) + D, at(x - 1, y + 1) + D)
-    }
-  }
-  return {
-    sample(u: number, v: number) {
-      const fx = Math.min(width - 1, Math.max(0, u * width - 0.5))
-      const fy = Math.min(height - 1, Math.max(0, (1 - v) * height - 0.5))
-      const x0 = Math.floor(fx), y0 = Math.floor(fy)
-      const x1 = Math.min(width - 1, x0 + 1), y1 = Math.min(height - 1, y0 + 1)
-      const tx = fx - x0, ty = fy - y0
-      const a = d[y0 * width + x0]!, b = d[y0 * width + x1]!
-      const c = d[y1 * width + x0]!, e = d[y1 * width + x1]!
-      return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + e * tx) * ty
-    }
-  }
-}
-
-function smoothstep(a: number, b: number, x: number) {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
-  return t * t * (3 - 2 * t)
-}
-
-/**
- * A two-sided fabric mesh: a grid whose front and back surfaces sit a few
- * millimetres apart (fuller across the shoulders, where the hanger fills the
- * garment), pinched together at the edges and bent by a shared drape so the
- * piece hangs with soft folds. Pixels outside the silhouette are discarded by
- * the material's alpha test. Each vertex is also bound to the cloth grid so
- * the physics can move it.
- */
-export function buildGarmentGeometry(kind: GarmentKind, canvases: GarmentCanvases, seedKey: string) {
-  const { spec } = canvases
-  const { width: w, height: h, thickness, body } = spec
-  const maskH = Math.round(MASK_WIDTH * h / w)
-  const field = distanceField(canvases.front, MASK_WIDTH, maskH)
-  const pxToWorld = w / MASK_WIDTH
-  const radius = 0.035
-
-  const seed = hashSeed(seedKey)
-  const p1 = seed * Math.PI * 2
-  const p2 = seed * 17.3
-  const p3 = seed * 5.1
-
-  const segX = 84
-  const segY = Math.round(segX * h / w)
-  const cols = segX + 1
-  const count = cols * (segY + 1)
-
-  const positions = new Float32Array(count * 2 * 3)
-  const uvs = new Float32Array(count * 2 * 2)
-  const grid = clothGrid(w, h)
-  const gridCoords = new Float32Array(count * 2 * 2)
-  const shells = new Float32Array(count * 2)
-  const top = isTop(kind)
-
-  for (let j = 0; j <= segY; j++) {
-    const v = j / segY
-    const y = -(1 - v) * h
-    const t = 1 - v
-    for (let i = 0; i <= segX; i++) {
-      const u = i / segX
-      const x = (u - 0.5) * w
-      const ax = Math.abs(x)
-      const nx = Math.min(1, ax / body)
-      const sleeve = top ? smoothstep(body - 0.01, body + 0.08, ax) : 0
-
-      // Fuller across the shoulders where the hanger sits, thin towards the hem.
-      const fill = top ? 1 - smoothstep(0.02, 0.32, t) : 1 - smoothstep(0, 0.2, t)
-      const half = thickness * (0.35 + 0.65 * fill) * (1 - 0.35 * sleeve)
-      const dist = Math.max(0, (field.sample(u, v) - 0.6) * pxToWorld)
-      const k = 1 - Math.min(dist / radius, 1)
-      const puff = half * Math.sqrt(Math.max(0, 1 - k * k))
-
-      // Drape: a slight belly, vertical folds that deepen towards the hem and
-      // sleeves that fall a little forward off the hanger.
-      const amp = 0.003 + 0.016 * Math.pow(t, 1.3)
-      let drape = 0.014 * (1 - nx * nx) * (0.4 + 0.6 * t)
-        + amp * (0.62 * Math.sin(x * 12 + p1) + 0.38 * Math.sin(x * 27 + p2))
-        + 0.005 * Math.sin(y * 9 + p3) * t
-      if (kind === 'tee') drape += 0.04 * sleeve
-      else if (top) drape += 0.035 * sleeve * (0.6 + 0.4 * t)
-      else drape -= 0.012 * smoothstep(0.0, 0.3, ax - 0.1) * t
-
-      const f = j * cols + i
-      const b = f + count
-      positions.set([x, y, drape + puff], f * 3)
-      positions.set([x, y, drape - puff], b * 3)
-      uvs.set([u, v], f * 2)
-      // Back panel art is painted as seen from behind.
-      uvs.set([1 - u, v], b * 2)
-      const gx = (x + w / 2) / grid.cell
-      const gy = -y / grid.cell
-      gridCoords.set([gx, gy], f * 2)
-      gridCoords.set([gx, gy], b * 2)
-      shells[f] = drape + puff
-      shells[b] = drape - puff
-    }
-  }
-
-  const indices: number[] = []
-  for (let j = 0; j < segY; j++) {
-    for (let i = 0; i < segX; i++) {
-      const a = j * cols + i
-      const b = a + 1
-      const c = a + cols + 1
-      const d = a + cols
-      indices.push(a, b, d, b, c, d)
-    }
-  }
-  const frontCount = indices.length
-  for (let n = 0; n < frontCount; n += 3) {
-    indices.push(indices[n]! + count, indices[n + 2]! + count, indices[n + 1]! + count)
-  }
-
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
-  geometry.setAttribute('aGrid', new THREE.BufferAttribute(gridCoords, 2))
-  geometry.setAttribute('aShell', new THREE.BufferAttribute(shells, 1))
-  geometry.setIndex(indices)
-  geometry.addGroup(0, frontCount, 0)
-  geometry.addGroup(frontCount, frontCount, 1)
-  geometry.computeVertexNormals()
-  geometry.computeBoundingSphere()
-
-  /** True where garment-space (x, y) is on the fabric. */
-  const insideAt = (x: number, y: number) => field.sample((x + w / 2) / w, 1 + y / h) > 0.5
-  return { geometry, insideAt }
+/** A flat cut-out of the garment front, for browsers without WebGL. */
+export async function previewGarment(product: Product, resolveUrl: (path: string) => string) {
+  const model = await loadGarmentModel(product.garment, resolveUrl)
+  const { front } = await paintGarment(product, model, resolveUrl(product.image))
+  const out = document.createElement('canvas')
+  out.width = front.width
+  out.height = front.height
+  const ctx = out.getContext('2d')!
+  ctx.drawImage(model.mask, 0, 0, out.width, out.height)
+  ctx.globalCompositeOperation = 'source-in'
+  ctx.drawImage(front, 0, 0)
+  return out.toDataURL('image/png')
 }

@@ -1,65 +1,58 @@
 import * as THREE from 'three'
 import type { Product } from '~/data/products'
-import { buildGarmentGeometry, getKnitCanvas, paintGarment, type GarmentSpec } from './garment'
 import { ClothSim } from './cloth'
+import { loadGarmentModel, paintGarment, type GarmentModel, type GarmentSpec } from './garment'
 import { createHanger } from './hardware'
+
+export type ResolveUrl = (path: string) => string
 
 export interface GarmentAsset {
   spec: GarmentSpec
   geometry: THREE.BufferGeometry
   insideAt: (x: number, y: number) => boolean
-  materials: [THREE.MeshStandardMaterial, THREE.MeshStandardMaterial]
-  /** Flat image of the painted front, for 2D fallbacks. */
-  front: HTMLCanvasElement
+  /** Front, back and (for layered pieces) under-layer materials. */
+  materials: THREE.MeshStandardMaterial[]
 }
 
 /*
- * Geometry, textures and materials are shared between every renderer on the
- * page (the rack and the product viewer), so each garment is built once.
+ * Models are shared per garment type; textures and materials per product.
+ * Everything is shared between renderers (the rack and the product viewer).
  */
 const cache = new Map<string, Promise<GarmentAsset>>()
-let knitTexture: THREE.CanvasTexture | null = null
 
-function getKnitTexture() {
-  if (!knitTexture) {
-    knitTexture = new THREE.CanvasTexture(getKnitCanvas())
-    knitTexture.wrapS = knitTexture.wrapT = THREE.RepeatWrapping
-    knitTexture.repeat.set(26, 26)
-    knitTexture.colorSpace = THREE.NoColorSpace
-  }
-  return knitTexture
-}
-
-function fabricMaterial(canvas: HTMLCanvasElement) {
-  const map = new THREE.CanvasTexture(canvas)
-  map.colorSpace = THREE.SRGBColorSpace
-  map.anisotropy = 8
-  return new THREE.MeshStandardMaterial({
+function fabric(model: GarmentModel, map: THREE.Texture | null, color?: string) {
+  const material = new THREE.MeshStandardMaterial({
     map,
-    bumpMap: getKnitTexture(),
-    bumpScale: 0.35,
-    roughness: 0.9,
+    color: color ?? '#ffffff',
+    roughness: 0.92,
     metalness: 0,
-    side: THREE.DoubleSide,
-    alphaTest: 0.5,
-    alphaToCoverage: true
+    side: THREE.DoubleSide
   })
+  if (model.normalMap) {
+    material.normalMap = model.normalMap
+    material.normalScale.copy(model.normalScale)
+  }
+  return material
 }
 
-export function loadGarment(product: Product, imageUrl: string) {
-  const key = `${product.id}|${imageUrl}|${product.color}|${product.placement}|${product.garment}`
+function canvasTexture(canvas: HTMLCanvasElement) {
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.anisotropy = 8
+  return texture
+}
+
+export function loadGarment(product: Product, resolveUrl: ResolveUrl) {
+  const key = [product.id, product.garment, product.color, product.under, product.image, product.placement, product.sleeve].join('|')
   let pending = cache.get(key)
   if (!pending) {
-    pending = paintGarment(product, imageUrl).then((canvases) => {
-      const { geometry, insideAt } = buildGarmentGeometry(product.garment, canvases, product.id)
-      const asset: GarmentAsset = {
-        spec: canvases.spec,
-        geometry,
-        insideAt,
-        materials: [fabricMaterial(canvases.front), fabricMaterial(canvases.back)],
-        front: canvases.front
-      }
-      return asset
+    pending = loadGarmentModel(product.garment, resolveUrl).then(async (model) => {
+      // The model's normal map follows the model's own UVs (second uv set).
+      if (model.normalMap) model.normalMap.channel = 1
+      const { front, back } = await paintGarment(product, model, resolveUrl(product.image))
+      const materials = [fabric(model, canvasTexture(front)), fabric(model, canvasTexture(back))]
+      if (model.layered) materials.push(fabric(model, null, product.under ?? '#f5f4f0'))
+      return { spec: model.spec, geometry: model.geometry, insideAt: model.insideAt, materials }
     })
     cache.set(key, pending)
   }
@@ -74,13 +67,15 @@ export function loadGarment(product: Product, imageUrl: string) {
 export class HangingGarment {
   readonly hanger: THREE.Group
   cloth: ClothSim | null = null
+  spec: GarmentSpec | null = null
   private disposed = false
 
-  constructor(product: Product, imageUrl: string, private scene: THREE.Scene, options: { lift?: number } = {}) {
-    this.hanger = createHanger(product.garment)
-    loadGarment(product, imageUrl).then((asset) => {
+  constructor(product: Product, resolveUrl: ResolveUrl, private scene: THREE.Scene, options: { lift?: number } = {}) {
+    this.hanger = createHanger()
+    loadGarment(product, resolveUrl).then((asset) => {
       if (this.disposed) return
-      this.cloth = new ClothSim(product.garment, asset)
+      this.spec = asset.spec
+      this.cloth = new ClothSim(asset)
       this.hanger.updateWorldMatrix(true, false)
       this.cloth.reset(this.hanger.matrixWorld, options.lift ?? 0)
       this.scene.add(this.cloth.mesh)

@@ -34,7 +34,7 @@ export default defineNuxtConfig({
 
   vite: {
     optimizeDeps: {
-      include: ['three', 'three/examples/jsm/environments/RoomEnvironment.js', 'three/examples/jsm/geometries/RoundedBoxGeometry.js']
+      include: ['three', 'three/examples/jsm/environments/RoomEnvironment.js', 'three/examples/jsm/loaders/GLTFLoader.js']
     }
   },
 

@@ -30,6 +30,17 @@ const linkClass = 'text-navy underline decoration-navy/30 underline-offset-4 tra
         <p v-for="paragraph in site.about.paragraphs" :key="paragraph">
           {{ paragraph }}
         </p>
+        <section class="space-y-1 pt-4 text-xs/relaxed text-navy/60">
+          <h3 class="text-[11px] tracking-[0.14em] text-navy/55 uppercase">
+            3D models
+          </h3>
+          <p v-for="credit in site.modelCredits" :key="credit.url">
+            Based on “<a :href="credit.url" target="_blank" rel="noopener" :class="linkClass">{{ credit.work }}</a>” by
+            <a :href="credit.authorUrl" target="_blank" rel="noopener" :class="linkClass">{{ credit.author }}</a>,
+            <a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener" :class="linkClass">CC BY 4.0</a>
+            — re-posed, simulated and re-textured.
+          </p>
+        </section>
       </div>
 
       <div v-else class="space-y-8 text-sm/relaxed text-navy/85">

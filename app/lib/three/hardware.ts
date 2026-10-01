@@ -1,6 +1,4 @@
 import * as THREE from 'three'
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
-import type { GarmentKind } from '~/data/products'
 
 /** Radius of the clothing rail; hooks are sized to wrap it. */
 export const ROD_RADIUS = 0.022
@@ -46,33 +44,32 @@ function hookGeometry(baseY: number) {
   })
 }
 
+/** Height of the hanger's top edge at x, in hanger space (garments rest on it). */
+export function hangerTopAt(x: number) {
+  const t = (Math.max(-0.33, Math.min(0.33, x)) / 0.33 + 1) / 2
+  return -0.233 * ((1 - t) ** 2 + t ** 2) + 2 * t * (1 - t) * -0.072 - 0.015
+}
+
 function teeHangerGeometry() {
   return cached('hanger:tee', () => {
     const s = new THREE.Shape()
-    s.moveTo(-0.36, -0.236)
-    s.quadraticCurveTo(0, -0.07, 0.36, -0.236)
-    s.quadraticCurveTo(0.386, -0.253, 0.36, -0.27)
-    s.quadraticCurveTo(0, -0.11, -0.36, -0.27)
-    s.quadraticCurveTo(-0.386, -0.253, -0.36, -0.236)
-    const g = new THREE.ExtrudeGeometry(s, { depth: 0.022, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.005, bevelSegments: 3, curveSegments: 32 })
-    g.translate(0, 0, -0.011)
+    // Sits just under the shoulder seams so the fabric drapes over it.
+    s.moveTo(-0.33, -0.233)
+    s.quadraticCurveTo(0, -0.072, 0.33, -0.233)
+    s.quadraticCurveTo(0.354, -0.25, 0.33, -0.266)
+    s.quadraticCurveTo(0, -0.112, -0.33, -0.266)
+    s.quadraticCurveTo(-0.354, -0.25, -0.33, -0.233)
+    const g = new THREE.ExtrudeGeometry(s, { depth: 0.02, bevelEnabled: true, bevelThickness: 0.005, bevelSize: 0.005, bevelSegments: 3, curveSegments: 32 })
+    g.translate(0, -0.015, -0.01)
     return g
   })
 }
 
-function clipBarGeometry() {
-  return cached('hanger:bar', () => {
-    const g = new RoundedBoxGeometry(0.86, 0.03, 0.03, 3, 0.012)
-    g.translate(0, -0.137, 0)
-    return g
-  })
-}
-
-/** A hanger in hanger space: rail centre at the origin, garment hanging into -y. */
-export function createHanger(kind: GarmentKind) {
+/** A wooden hanger in hanger space: rail centre at the origin, garment hanging into -y. */
+export function createHanger() {
   const { wood, chrome, brushed } = getHardwareMaterials()
   const group = new THREE.Group()
-  group.name = `hanger:${kind}`
+  group.name = 'hanger'
   const add = (geometry: THREE.BufferGeometry, material: THREE.Material) => {
     const mesh = new THREE.Mesh(geometry, material)
     mesh.castShadow = true
@@ -80,21 +77,10 @@ export function createHanger(kind: GarmentKind) {
     return mesh
   }
 
-  if (kind === 'tee') {
-    add(hookGeometry(-0.156), chrome)
-    add(teeHangerGeometry(), wood)
-    const ferrule = add(cached('ferrule', () => new THREE.CylinderGeometry(0.0105, 0.0105, 0.016, 20)), brushed)
-    ferrule.position.y = -0.152
-  } else {
-    add(hookGeometry(-0.124), chrome)
-    add(clipBarGeometry(), wood)
-    const wire = cached('clip:wire', () => new THREE.CylinderGeometry(0.0035, 0.0035, 0.03, 8))
-    const clip = cached('clip:body', () => new RoundedBoxGeometry(0.05, 0.056, 0.05, 2, 0.008))
-    for (const x of [-0.29, 0.29]) {
-      add(wire, chrome).position.set(x, -0.162, 0)
-      add(clip, brushed).position.set(x, -0.198, 0)
-    }
-  }
+  add(hookGeometry(-0.17), chrome)
+  add(teeHangerGeometry(), wood)
+  const ferrule = add(cached('ferrule', () => new THREE.CylinderGeometry(0.0105, 0.0105, 0.016, 20)), brushed)
+  ferrule.position.y = -0.166
   return group
 }
 

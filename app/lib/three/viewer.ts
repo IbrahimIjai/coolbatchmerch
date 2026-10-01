@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { Product } from '~/data/products'
-import { HangingGarment } from './assets'
+import { HangingGarment, type ResolveUrl } from './assets'
 import { GARMENT_SPECS } from './garment'
 import { createStage, damp, fitDistance, prefersReducedMotion, type Stage } from './stage'
 
@@ -48,7 +48,7 @@ export class ViewerController {
   private twirl: { from: number, elapsed: number } | null = null
   private drag: { id: number, x: number, lastX: number, lastT: number, start: number, moved: boolean } | null = null
 
-  constructor(private container: HTMLElement, private products: Product[], private resolveImage: (p: Product) => string, index: number) {
+  constructor(private container: HTMLElement, private products: Product[], private resolveUrl: ResolveUrl, index: number) {
     this.stage = createStage(container, stage => this.frame3D(stage))
     this.show(index, 0)
     this.bind()
@@ -72,12 +72,11 @@ export class ViewerController {
     }
 
     const spec = GARMENT_SPECS[product.garment]
-    // Shorts are presented a little larger so both garment types read at a similar size.
-    const presentScale = product.garment === 'shorts' ? 1.3 : 1
+    const presentScale = 1
     const totalHeight = (spec.drop + spec.height + 0.04) * presentScale
 
     const holder = new THREE.Group()
-    const garment = new HangingGarment(product, this.resolveImage(product), this.stage.scene)
+    const garment = new HangingGarment(product, this.resolveUrl, this.stage.scene)
     garment.hanger.scale.setScalar(presentScale)
     garment.hanger.position.y = totalHeight / 2 - 0.04 * presentScale
     holder.add(garment.hanger)
@@ -197,11 +196,11 @@ export class ViewerController {
       actor.holder.position.x = actor.x
       actor.garment.hanger.rotation.set(
         0,
-        actor.spin + sway * 0.05 * Math.sin(this.time * 0.6 + actor.phase),
-        sway * 0.01 * Math.sin(this.time * 0.85 + actor.phase)
+        actor.spin + sway * 0.03 * Math.sin(this.time * 0.5 + actor.phase),
+        sway * 0.006 * Math.sin(this.time * 0.8 + actor.phase)
       )
       // Firm for presentation, looser while spinning so the fabric flares.
-      actor.garment.update(dt, spinning && actor === this.current ? 0.12 : 0.45, sway * 0.6)
+      actor.garment.update(dt, spinning && actor === this.current ? 0.08 : 0.35, sway)
       if (actor.leaving && Math.abs(actor.x - actor.targetX) < 0.02) this.remove(actor)
     }
   }

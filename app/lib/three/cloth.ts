@@ -1,24 +1,27 @@
 import * as THREE from 'three'
-import type { GarmentKind } from '~/data/products'
 import type { GarmentAsset } from './assets'
 
 /**
  * Position-based cloth (Verlet integration + distance constraints).
  *
- * Each garment is a coarse particle grid laid over its silhouette. Particles
- * that touch the hanger are pinned to it; everything else hangs under gravity,
- * lags behind the hanger when it moves and flutters in a faint draught. The
- * detailed render mesh is bound to this grid and deformed on the GPU, so the
- * solver stays small (a few hundred particles per garment).
+ * Each garment is a coarse particle grid laid over its flat silhouette. The
+ * particles along the shoulders rest on the hanger and are pinned to it;
+ * everything else hangs under real-scale gravity and trails the hanger with a
+ * little inertia when it swings, slides or turns. The detailed garment mesh is
+ * bound to this grid and deformed on the GPU, so the solver stays small.
  *
- * A shape-matching term pulls the cloth back towards its pressed, flat shape;
- * raising `rigidity` (e.g. on hover) makes the piece "solid" and presentable.
+ * Fabric has memory: a shape-matching term keeps the garment close to its
+ * natural hanging shape. `rigidity` raises it while a piece is being held up
+ * to look at, so it presents neatly without going stiff.
  */
 
-const GRAVITY = 15
-const DAMPING = 0.985
-const ITERATIONS = 8
-const STEP = 1 / 60
+/** 9.81 m/s² in garment units (1 unit ≈ 0.74 m). */
+const GRAVITY = 13.2
+/** Velocity kept per step — still air around heavyweight cotton. */
+const DAMPING = 0.982
+const ITERATIONS = 10
+const STEP = 1 / 90
+const MAX_STEPS = 4
 
 const BLOCK_POSITION = 0
 const BLOCK_AXIS_X = 1
@@ -71,6 +74,12 @@ vec3 clothShellAxis = normalize(clothFetch(${BLOCK_AXIS_Z}, aGrid));
 vec3 transformed = clothFetch(${BLOCK_POSITION}, aGrid) + clothShellAxis * aShell;
 `
 
+/** The reverse side of the fabric (seen through the neck, hem and cuffs) is in shadow. */
+const INSIDE_SHADE = /* glsl */`
+#include <map_fragment>
+if (!gl_FrontFacing) diffuseColor.rgb *= 0.5;
+`
+
 function bindToCloth<T extends THREE.Material>(material: T, uniforms: { clothTex: THREE.IUniform, clothSize: THREE.IUniform }) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.clothTex = uniforms.clothTex
@@ -79,8 +88,9 @@ function bindToCloth<T extends THREE.Material>(material: T, uniforms: { clothTex
       .replace('#include <common>', `#include <common>\n${VERTEX_PARS}`)
       .replace('#include <beginnormal_vertex>', BEGIN_NORMAL)
       .replace('#include <begin_vertex>', BEGIN_VERTEX)
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', INSIDE_SHADE)
   }
-  material.customProgramCacheKey = () => 'cloth-v1'
+  material.customProgramCacheKey = () => 'cloth-v3'
   return material
 }
 
@@ -110,7 +120,7 @@ export class ClothSim {
   private accumulator = 0
   private time = 0
 
-  constructor(kind: GarmentKind, asset: GarmentAsset) {
+  constructor(asset: GarmentAsset) {
     const { spec } = asset
     this.grid = clothGrid(spec.width, spec.height)
     const { cols, rows, cell } = this.grid
@@ -138,16 +148,12 @@ export class ClothSim {
       }
     }
 
-    // Pins: where the garment rests on the hanger.
+    // Pins: the band of fabric resting along the top of the hanger.
     for (let k = 0; k < n; k++) {
       if (!this.inside[k]) continue
       const x = this.rest[k * 3]!
       const y = this.rest[k * 3 + 1]! + spec.drop
-      if (kind === 'tee') {
-        if (Math.abs(x) <= 0.34 && y >= -0.075 + Math.abs(x) * -0.12) this.pinned[k] = 1
-      } else if (y >= -0.035 && Math.min(Math.abs(x - 0.29), Math.abs(x + 0.29)) <= 0.06) {
-        this.pinned[k] = 1
-      }
+      if (Math.abs(x) <= spec.shoulder && !isInside(x, y + 0.075)) this.pinned[k] = 1
     }
 
     // Links between neighbouring particles whose connecting segment lies on the fabric.
@@ -168,12 +174,13 @@ export class ClothSim {
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
         const k = j * cols + i
-        if (i + 1 < cols) addLink(k, k + 1, 1, 0.12)
-        if (j + 1 < rows) addLink(k, k + cols, 1, 0.12)
-        if (i + 1 < cols && j + 1 < rows) addLink(k, k + cols + 1, 0.7, 0.05)
-        if (i > 0 && j + 1 < rows) addLink(k, k + cols - 1, 0.7, 0.05)
-        if (i + 2 < cols) addLink(k, k + 2, 0.25, 0.02)
-        if (j + 2 < rows) addLink(k, k + cols * 2, 0.25, 0.02)
+        // Woven/knit fabric barely stretches, resists compression less, and bends softly.
+        if (i + 1 < cols) addLink(k, k + 1, 1, 0.35)
+        if (j + 1 < rows) addLink(k, k + cols, 1, 0.35)
+        if (i + 1 < cols && j + 1 < rows) addLink(k, k + cols + 1, 0.9, 0.25)
+        if (i > 0 && j + 1 < rows) addLink(k, k + cols - 1, 0.9, 0.25)
+        if (i + 2 < cols) addLink(k, k + 2, 0.7, 0.2)
+        if (j + 2 < rows) addLink(k, k + cols * 2, 0.7, 0.2)
       }
     }
     this.links = Int32Array.from(links)
@@ -232,17 +239,11 @@ export class ClothSim {
       clothTex: { value: this.texture },
       clothSize: { value: new THREE.Vector2(cols, rows) }
     }
-    const [front, back] = asset.materials
-    this.materials = [bindToCloth(front.clone(), uniforms), bindToCloth(back.clone(), uniforms)]
-    const depth = bindToCloth(new THREE.MeshDepthMaterial({
-      depthPacking: THREE.RGBADepthPacking,
-      map: front.map,
-      alphaTest: 0.5,
-      side: THREE.DoubleSide
-    }), uniforms)
-    this.materials.push(depth)
+    const surfaces = asset.materials.map(m => bindToCloth(m.clone(), uniforms))
+    const depth = bindToCloth(new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, side: THREE.DoubleSide }), uniforms)
+    this.materials = [...surfaces, depth]
 
-    this.mesh = new THREE.Mesh(asset.geometry, this.materials.slice(0, 2))
+    this.mesh = new THREE.Mesh(asset.geometry, surfaces)
     this.mesh.customDepthMaterial = depth
     this.mesh.frustumCulled = false
     this.mesh.castShadow = true
@@ -278,13 +279,13 @@ export class ClothSim {
 
   /**
    * Advances the simulation. `matrix` is the hanger's world matrix,
-   * `rigidity` 0..1 blends from free-hanging cloth to the pressed shape.
+   * `rigidity` 0..1 blends from free-hanging cloth towards its pressed shape.
    */
   update(dt: number, matrix: THREE.Matrix4, rigidity: number, draught = 1) {
-    this.accumulator = Math.min(this.accumulator + dt, STEP * 3)
+    this.accumulator = Math.min(this.accumulator + dt, STEP * MAX_STEPS)
     if (this.accumulator < STEP) return
-    const scale = Math.hypot(matrix.elements[0]!, matrix.elements[1]!, matrix.elements[2]!)
     const e = matrix.elements
+    const scale = Math.hypot(e[0]!, e[1]!, e[2]!)
     // The garment's facing direction, for the out-of-plane draught.
     const nx = e[8]! / scale, ny = e[9]! / scale, nz = e[10]! / scale
     this.computeTargets(matrix)
@@ -300,7 +301,7 @@ export class ClothSim {
     const { pos, prev, target, inside, pinned, phase, rest } = this
     const dt2 = dt * dt
     const t = this.time
-    const air = 0.55 * draught * scale
+    const air = 0.06 * draught * scale
 
     for (let k = 0; k < this.count; k++) {
       if (!inside[k]) continue
@@ -311,9 +312,9 @@ export class ClothSim {
         prev[o + 2] = pos[o + 2] = target[o + 2]!
         continue
       }
-      // Lower fabric moves more freely in the draught.
+      // A barely-there draught; lower fabric moves more freely.
       const depth = Math.min(1, -rest[o + 1]! / 1.2)
-      const gust = air * depth * (Math.sin(t * 0.9 + phase[k]!) * 0.6 + Math.sin(t * 2.3 + phase[k]! * 1.7) * 0.25)
+      const gust = air * depth * (Math.sin(t * 0.45 + phase[k]!) * 0.7 + Math.sin(t * 1.1 + phase[k]! * 1.7) * 0.3)
       const vx = (pos[o]! - prev[o]!) * DAMPING
       const vy = (pos[o + 1]! - prev[o + 1]!) * DAMPING
       const vz = (pos[o + 2]! - prev[o + 2]!) * DAMPING
@@ -326,7 +327,7 @@ export class ClothSim {
     }
 
     const { links, linkRest, linkStretch, linkCompress } = this
-    const shape = Math.min(0.9, 0.012 + rigidity * 0.5)
+    const shape = Math.min(0.6, 0.03 + rigidity * 0.3)
     for (let it = 0; it < ITERATIONS; it++) {
       for (let l = 0, c = 0; l < links.length; l += 2, c++) {
         const a = links[l]! * 3
@@ -350,7 +351,7 @@ export class ClothSim {
         pos[b + 1] = pos[b + 1]! - dy * s * wb
         pos[b + 2] = pos[b + 2]! - dz * s * wb
       }
-      if (it % 2 === 1) {
+      if (it % 3 === 2) {
         for (let k = 0; k < this.count; k++) {
           if (!inside[k] || pinned[k]) continue
           const o = k * 3
@@ -397,6 +398,7 @@ export class ClothSim {
       }
     }
     // Ghosts follow their anchor rigidly in its local frame.
+    const scale = this.currentScale()
     for (let k = 0; k < this.count; k++) {
       if (inside[k]) continue
       const a = anchor[k]!
@@ -406,13 +408,12 @@ export class ClothSim {
       const zx = axes[ao + 3]!, zy = axes[ao + 4]!, zz = axes[ao + 5]!
       // y axis = z × x
       const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx
-      const dx = rest[k * 3]! - rest[a * 3]!
-      const dy = rest[k * 3 + 1]! - rest[a * 3 + 1]!
-      const s = this.currentScale(a)
+      const dx = (rest[k * 3]! - rest[a * 3]!) * scale
+      const dy = (rest[k * 3 + 1]! - rest[a * 3 + 1]!) * scale
       const o = k * 3
-      pos[o] = pos[a * 3]! + (xx * dx + yx * dy) * s
-      pos[o + 1] = pos[a * 3 + 1]! + (xy * dx + yy * dy) * s
-      pos[o + 2] = pos[a * 3 + 2]! + (xz * dx + yz * dy) * s
+      pos[o] = pos[a * 3]! + xx * dx + yx * dy
+      pos[o + 1] = pos[a * 3 + 1]! + xy * dx + yy * dy
+      pos[o + 2] = pos[a * 3 + 2]! + xz * dx + yz * dy
       axes.copyWithin(k * 6, ao, ao + 6)
     }
 
@@ -433,16 +434,13 @@ export class ClothSim {
     this.texture.needsUpdate = true
   }
 
-  /** World units per rest unit, measured from the target layout. */
-  private currentScale(k: number) {
-    const { cols } = this.grid
-    const n = k % cols < cols - 1 ? k + 1 : k - 1
-    const rx = this.rest[n * 3]! - this.rest[k * 3]!
-    const ry = this.rest[n * 3 + 1]! - this.rest[k * 3 + 1]!
-    const tx = this.target[n * 3]! - this.target[k * 3]!
-    const ty = this.target[n * 3 + 1]! - this.target[k * 3 + 1]!
-    const tz = this.target[n * 3 + 2]! - this.target[k * 3 + 2]!
-    return Math.hypot(tx, ty, tz) / (Math.hypot(rx, ry) || 1)
+  /** World units per rest unit, from the hanger's current scale. */
+  private currentScale() {
+    const t = this.target
+    const r = this.rest
+    const dx = t[3]! - t[0]!, dy = t[4]! - t[1]!, dz = t[5]! - t[2]!
+    const rx = r[3]! - r[0]!, ry = r[4]! - r[1]!
+    return Math.hypot(dx, dy, dz) / (Math.hypot(rx, ry) || 1)
   }
 
   dispose() {
