@@ -1,5 +1,5 @@
 {
-  "name": "ui",
+  "name": "naija-threads-rack",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,8 @@
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
     "lint": "eslint .",
-    "typecheck": "nuxt typecheck"
+    "typecheck": "nuxt typecheck",
+    "render:artwork": "bun scripts/render-artwork.ts"
   },
   "dependencies": {
     "@iconify-json/lucide": "^1.2.134",

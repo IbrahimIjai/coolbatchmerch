@@ -1,107 +1,79 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
 
-@theme static {
-  --font-sans: 'Geist', 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', monospace;
-  --color-paper: #f7f4eb;
-  --color-ink: #111111;
-  --text-ui: 0.8125rem;
-  --text-ui--line-height: 1.5;
+@custom-variant pointer-fine (@media (pointer: fine));
 
-  --radius-xs: 0.125rem;
-  --radius-sm: 0.25rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.75rem;
-  --radius-2xl: 1rem;
+@theme static {
+  --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-script: 'Lobster Two', cursive;
+
+  --color-paper: #ebe8e1;
+  --color-navy: #27304f;
+  --color-ink: #1d2236;
 }
 
 :root {
-  --ds-paper: #f7f4eb;
-  --ds-ink: #111111;
-  --ds-surface: #ffffff;
-  --ds-surface-quiet: #f5f5f3;
-  --ds-surface-selected: #ececea;
-  --ds-border: rgb(17 17 17 / 12%);
-  --ds-border-subtle: rgb(17 17 17 / 8%);
-  --ds-border-strong: rgb(17 17 17 / 18%);
-  --ds-shadow-xs: 0 1px 2px rgb(17 17 17 / 4%);
-  --ds-shadow-floating: 0 8px 30px rgb(17 17 17 / 8%);
+  --ui-primary: var(--color-navy);
+  --ui-bg: var(--color-paper);
+  --ui-bg-muted: #e3dfd6;
+  --ui-bg-elevated: #f3f1ec;
+  --ui-bg-accented: #dcd7cc;
+  --ui-bg-inverted: var(--color-navy);
 
-  --ui-primary: var(--ds-ink);
-  --ui-bg: var(--ds-surface);
-  --ui-bg-muted: var(--ds-surface-quiet);
-  --ui-bg-elevated: var(--ds-surface-quiet);
-  --ui-bg-accented: var(--ds-surface-selected);
-  --ui-bg-inverted: var(--ds-ink);
+  --ui-text: var(--color-ink);
+  --ui-text-dimmed: #8b8d99;
+  --ui-text-muted: #5f6378;
+  --ui-text-toned: #474b62;
+  --ui-text-highlighted: var(--color-navy);
+  --ui-text-inverted: var(--color-paper);
 
-  --ui-text: var(--ds-ink);
-  --ui-text-dimmed: #a3a3a3;
-  --ui-text-muted: #737373;
-  --ui-text-toned: #525252;
-  --ui-text-highlighted: var(--ds-ink);
-  --ui-text-inverted: var(--ds-paper);
-
-  --ui-border: var(--ds-border);
-  --ui-border-muted: var(--ds-border-subtle);
-  --ui-border-accented: var(--ds-border-strong);
-  --ui-border-inverted: var(--ds-ink);
+  --ui-border: rgb(39 48 79 / 14%);
+  --ui-border-muted: rgb(39 48 79 / 8%);
+  --ui-border-accented: rgb(39 48 79 / 24%);
+  --ui-border-inverted: var(--color-navy);
   --ui-radius: 0.5rem;
-}
 
-html {
-  background: var(--ds-paper);
   color-scheme: light;
 }
 
-.dark {
-  --color-paper: #171715;
-  --color-ink: #f7f4eb;
-  --ds-paper: #171715;
-  --ds-ink: #f7f4eb;
-  --ds-surface: #20201d;
-  --ds-surface-quiet: #262622;
-  --ds-surface-selected: #302f2a;
-  --ds-border: rgb(247 244 235 / 14%);
-  --ds-border-subtle: rgb(247 244 235 / 9%);
-  --ds-border-strong: rgb(247 244 235 / 22%);
-  --ds-shadow-xs: 0 1px 2px rgb(0 0 0 / 18%);
-  --ds-shadow-floating: 0 8px 30px rgb(0 0 0 / 30%);
-
-  --ui-primary: var(--ds-ink);
-  --ui-bg: var(--ds-surface);
-  --ui-bg-muted: var(--ds-surface-quiet);
-  --ui-bg-elevated: var(--ds-surface-quiet);
-  --ui-bg-accented: var(--ds-surface-selected);
-  --ui-bg-inverted: var(--ds-ink);
-
-  --ui-text: var(--ds-ink);
-  --ui-text-dimmed: #8f8f88;
-  --ui-text-muted: #b5b5ad;
-  --ui-text-toned: #d0d0c8;
-  --ui-text-highlighted: var(--ds-ink);
-  --ui-text-inverted: var(--ds-paper);
-
-  --ui-border: var(--ds-border);
-  --ui-border-muted: var(--ds-border-subtle);
-  --ui-border-accented: var(--ds-border-strong);
-  --ui-border-inverted: var(--ds-ink);
-  color-scheme: dark;
+html {
+  background: var(--color-paper);
 }
 
 body {
-  min-height: 100vh;
-  background: var(--ds-paper);
-  color: var(--ds-ink);
+  min-height: 100dvh;
+  color: var(--color-ink);
   font-family: var(--font-sans);
-  font-size: var(--text-ui);
+  font-size: 0.875rem;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* Warm paper with a faint dot grid. */
+  background-color: var(--color-paper);
+  background-image: radial-gradient(circle at center, rgb(39 48 79 / 9%) 1px, transparent 1.4px);
+  background-size: 24px 24px;
+  background-position: center top;
 }
 
-@layer base {
-  *, ::before, ::after {
-    letter-spacing: 0;
-  }
+::selection {
+  background: var(--color-navy);
+  color: var(--color-paper);
+}
+
+/* Rounded outline pill used for every "See availability" call to action. */
+.pill-button {
+  border-radius: 9999px;
+  padding-inline: 1rem;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-navy);
+  background: transparent;
+  --tw-ring-color: rgb(39 48 79 / 55%);
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+.pill-button:hover {
+  background: var(--color-navy);
+  color: var(--color-paper);
 }
