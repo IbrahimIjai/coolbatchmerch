@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Nigeria @ 66 — print artwork</title>
+  <!--
+    Source artwork for the garment prints in /public/merch.
+    Open this file in a browser to preview every piece, or run
+    `npm run render:artwork` to export each one as a transparent PNG.
+    Append #<id> (e.g. #sixty-six) to show a single piece.
+  -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Mono:wght@400;500&family=Lobster+Two:ital,wght@1,700&family=Playfair+Display:ital,wght@1,900&display=block" rel="stylesheet">
+  <style>
+    html, body { margin: 0; padding: 0; background: transparent; }
+    body.preview { background: #8a8a8a; display: flex; flex-wrap: wrap; gap: 24px; padding: 24px; }
+    body.preview section { background: var(--fabric); }
+    body.single section { display: none; }
+    body.single section.active { display: block; }
+    section { line-height: 0; }
+    section svg { display: block; }
+  </style>
+</head>
+<body>
+
+<!-- 1. Green White Green — chest print on white tee -->
+<section id="green-white-green" data-w="1000" data-h="1000" style="--fabric:#f4f3ef">
+  <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000">
+    <g font-family="Anton" text-anchor="middle" letter-spacing="6">
+      <text x="500" y="318" font-size="262" fill="#0a7a46">GREEN</text>
+      <text x="500" y="590" font-size="262" fill="none" stroke="#0a7a46" stroke-width="8" stroke-linejoin="round">WHITE</text>
+      <text x="500" y="862" font-size="262" fill="#0a7a46">GREEN</text>
+    </g>
+    <line x1="150" y1="912" x2="850" y2="912" stroke="#1f2a44" stroke-width="3" />
+    <text x="500" y="962" font-family="DM Mono" font-weight="500" font-size="31" fill="#1f2a44" text-anchor="middle" letter-spacing="7">EST. 01·10·1960 — NIGERIA AT 66</text>
+  </svg>
+</section>
+
+<!-- 2. Sixty-Six — chest print on forest tee -->
+<section id="sixty-six" data-w="1000" data-h="1000" style="--fabric:#1f5a3d">
+  <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000">
+    <defs>
+      <path id="ring66" d="M 500,500 m -392,0 a 392,392 0 1,1 784,0 a 392,392 0 1,1 -784,0" />
+    </defs>
+    <g fill="none" stroke="#efe7d2">
+      <circle cx="500" cy="500" r="452" stroke-width="5" />
+      <circle cx="500" cy="500" r="332" stroke-width="3" />
+    </g>
+    <text font-family="DM Mono" font-weight="500" font-size="44" fill="#efe7d2" letter-spacing="4">
+      <textPath href="#ring66" textLength="2440" lengthAdjust="spacing">NIGERIA · INDEPENDENCE · 1960 — 2026 · ONE NATION · SIXTY-SIX YEARS ·</textPath>
+    </text>
+    <text x="492" y="640" font-family="Playfair Display" font-style="italic" font-weight="900" font-size="440" fill="#efe7d2" text-anchor="middle">66</text>
+    <g fill="#efe7d2">
+      <path d="M500 712 l9 19 21 3 -15 15 4 21 -19 -10 -19 10 4 -21 -15 -15 21 -3z" />
+    </g>
+  </svg>
+</section>
+
+<!-- 3. Adire — all-over front on indigo tee -->
+<section id="adire-tee" data-w="1200" data-h="1200" style="--fabric:#2a3560">
+  <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200" data-pattern="adire"></svg>
+</section>
+
+<!-- 4. Èkó Skyline — chest print on black tee -->
+<section id="eko-skyline" data-w="1000" data-h="1000" style="--fabric:#1b1b1d">
+  <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000">
+    <text x="500" y="330" font-family="Lobster Two" font-style="italic" font-weight="700" font-size="300" fill="#f3eee2" text-anchor="middle">Èkó</text>
+    <g fill="none" stroke="#f3eee2" stroke-width="5" stroke-linejoin="round" data-skyline="1"></g>
+    <g fill="none" stroke="#f3eee2" stroke-width="5" stroke-linecap="round">
+      <path d="M90 690 Q500 668 910 690" />
+      <path d="M90 712 Q500 690 910 712" />
+      <g data-pillars="1"></g>
+      <path d="M140 770 q20 -10 40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0" stroke-width="4" opacity="0.8" />
+      <path d="M220 800 q20 -10 40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0 t40 0" stroke-width="4" opacity="0.55" />
+    </g>
+    <text x="500" y="880" font-family="DM Mono" font-weight="500" font-size="31" fill="#f3eee2" text-anchor="middle" letter-spacing="6">LAGOS · 6.5244° N, 3.3792° E</text>
+    <text x="500" y="930" font-family="DM Mono" font-weight="500" font-size="31" fill="#4fbf7c" text-anchor="middle" letter-spacing="6">NIGERIA @ 66</text>
+  </svg>
+</section>
+
+<!-- 5. Confluence — chest print on cream tee -->
+<section id="confluence" data-w="1000" data-h="1000" style="--fabric:#ece4d0">
+  <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000">
+    <defs>
+      <path id="arcTop" d="M 105,520 A 395,395 0 0,1 895,520" />
+      <path id="arcBottom" d="M 140,500 A 360,360 0 0,0 860,500" />
+      <clipPath id="disc"><circle cx="500" cy="500" r="232" /></clipPath>
+    </defs>
+    <text font-family="Anton" font-size="84" fill="#1d2a4a" letter-spacing="10" text-anchor="middle">
+      <textPath href="#arcTop" startOffset="50%">UNITY AND FAITH</textPath>
+    </text>
+    <text font-family="Anton" font-size="84" fill="#1d2a4a" letter-spacing="10" text-anchor="middle" dominant-baseline="hanging">
+      <textPath href="#arcBottom" startOffset="50%">PEACE AND PROGRESS</textPath>
+    </text>
+    <circle cx="500" cy="500" r="256" fill="none" stroke="#c8962e" stroke-width="6" />
+    <circle cx="500" cy="500" r="232" fill="#0d6b40" />
+    <g clip-path="url(#disc)" fill="none" stroke="#f6f1e4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M248 300 C340 330 400 380 440 450 S490 540 500 560" stroke-width="58" />
+      <path d="M752 300 C660 330 600 380 560 450 S510 540 500 560" stroke-width="58" />
+      <path d="M500 540 C505 620 470 680 500 760" stroke-width="66" />
+    </g>
+    <g font-family="DM Mono" font-weight="500" font-size="30" fill="#1d2a4a" text-anchor="middle" letter-spacing="3">
+      <text x="62" y="512" transform="rotate(-90 62 512)">1960</text>
+      <text x="938" y="512" transform="rotate(90 938 512)">2026</text>
+    </g>
+    <g fill="#c8962e">
+      <path d="M500 214 l7 15 16 2 -12 11 3 16 -14 -8 -14 8 3 -16 -12 -11 16 -2z" transform="translate(0 -1)" />
+    </g>
+  </svg>
+</section>
+
+<!-- 6. Jollof Social Club — chest print on bone tee -->
+<section id="jollof-social-club" data-w="1000" data-h="1000" style="--fabric:#f2efe8">
+  <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000" viewBox="0 0 1000 1000">
+    <defs>
+      <path id="jollofArc" d="M 120,480 A 380,330 0 0,1 880,480" />
+      <clipPath id="mound"><path d="M305 520 C320 400 680 400 695 520 Z" /></clipPath>
+    </defs>
+    <text font-family="Anton" font-size="104" fill="#d4462a" letter-spacing="6" text-anchor="middle">
+      <textPath href="#jollofArc" startOffset="50%">JOLLOF SOCIAL CLUB</textPath>
+    </text>
+    <g fill="none" stroke="#2a2523" stroke-width="11" stroke-linecap="round">
+      <path d="M440 384 q-18 -18 0 -36 t0 -36" />
+      <path d="M500 376 q-18 -18 0 -36 t0 -36" />
+      <path d="M560 384 q-18 -18 0 -36 t0 -36" />
+    </g>
+    <path d="M305 520 C320 400 680 400 695 520 Z" fill="#d4462a" />
+    <g clip-path="url(#mound)" stroke="#f3a07a" stroke-width="7" stroke-linecap="round" data-rice="1"></g>
+    <g fill="#2f7d4a">
+      <ellipse cx="560" cy="432" rx="26" ry="11" transform="rotate(-24 560 432)" />
+      <ellipse cx="452" cy="452" rx="22" ry="9" transform="rotate(18 452 452)" />
+    </g>
+    <rect x="262" y="506" width="476" height="38" rx="19" fill="#2a2523" />
+    <path d="M292 544 H708 L692 742 Q688 770 660 770 H340 Q312 770 308 742 Z" fill="#2a2523" />
+    <rect x="212" y="566" width="70" height="30" rx="15" fill="#2a2523" />
+    <rect x="718" y="566" width="70" height="30" rx="15" fill="#2a2523" />
+    <path d="M330 600 H670" stroke="#f2efe8" stroke-width="5" opacity="0.35" />
+    <text x="500" y="850" font-family="DM Mono" font-weight="500" font-size="36" fill="#2a2523" text-anchor="middle" letter-spacing="9">SMOKY PARTY EDITION</text>
+    <text x="500" y="905" font-family="DM Mono" font-size="28" fill="#d4462a" text-anchor="middle" letter-spacing="7">MEMBERS SINCE 1960</text>
+  </svg>
+</section>
+
+<!-- 7. Aso-Oke — all-over front on shorts -->
+<section id="aso-oke" data-w="1200" data-h="1200" style="--fabric:#efe6d2">
+  <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200" data-pattern="asooke"></svg>
+</section>
+
+<!-- 8. Naija 66 — leg emblem on kelly green shorts -->
+<section id="naija-66-badge" data-w="600" data-h="600" style="--fabric:#0f7a47">
+  <svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600">
+    <defs>
+      <path id="badgeRing" d="M 300,300 m -232,0 a 232,232 0 1,1 464,0 a 232,232 0 1,1 -464,0" />
+    </defs>
+    <circle cx="300" cy="300" r="284" fill="none" stroke="#f2ecda" stroke-width="12" />
+    <circle cx="300" cy="300" r="190" fill="none" stroke="#f2ecda" stroke-width="5" />
+    <text font-family="DM Mono" font-weight="500" font-size="42" fill="#f2ecda">
+      <textPath href="#badgeRing" textLength="1440" lengthAdjust="spacing">NAIJA THREADS · INDEPENDENCE CAPSULE ·</textPath>
+    </text>
+    <text x="296" y="372" font-family="Playfair Display" font-style="italic" font-weight="900" font-size="220" fill="#f2ecda" text-anchor="middle">66</text>
+  </svg>
+</section>
+
+<!-- 9. Oniko — all-over tie-dye front on indigo shorts -->
+<section id="oniko" data-w="1200" data-h="1200" style="--fabric:#263058">
+  <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1200" viewBox="0 0 1200 1200" data-pattern="oniko"></svg>
+</section>
+
+<!-- 10. Lagos Linen — embroidered leg mark on sand shorts -->
+<section id="linen-mark" data-w="600" data-h="600" style="--fabric:#d8c7a6">
+  <svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600">
+    <g font-family="Lobster Two" font-style="italic" font-weight="700" fill="#0f5f3b" text-anchor="middle">
+      <text x="262" y="262" font-size="172">Naija</text>
+      <text x="318" y="428" font-size="146">Threads</text>
+    </g>
+    <text x="300" y="545" font-family="DM Mono" font-weight="500" font-size="36" fill="#0f5f3b" text-anchor="middle" letter-spacing="9">NIGERIA @ 66</text>
+  </svg>
+</section>
+
+<script>
+  const NS = 'http://www.w3.org/2000/svg'
+
+  // Deterministic PRNG so every export is identical.
+  function rng(seed) {
+    let s = seed >>> 0
+    return () => {
+      s = (s + 0x6D2B79F5) >>> 0
+      let t = s
+      t = Math.imul(t ^ (t >>> 15), t | 1)
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+  }
+
+  function el(name, attrs, parent) {
+    const node = document.createElementNS(NS, name)
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v)
+    if (parent) parent.appendChild(node)
+    return node
+  }
+
+  function addResistFilter(svg, id, seed, scale) {
+    const defs = el('defs', {}, svg)
+    const filter = el('filter', { id, x: '-5%', y: '-5%', width: '110%', height: '110%' }, defs)
+    el('feTurbulence', { type: 'fractalNoise', baseFrequency: '0.035', numOctaves: '3', seed: String(seed), result: 'noise' }, filter)
+    el('feDisplacementMap', { in: 'SourceGraphic', in2: 'noise', scale: String(scale), xChannelSelector: 'R', yChannelSelector: 'G', result: 'wobble' }, filter)
+    el('feGaussianBlur', { in: 'wobble', stdDeviation: '0.8' }, filter)
+  }
+
+  // Adire eleko: hand-painted starch-resist tiles, pale on indigo.
+  function drawAdire(svg) {
+    const rand = rng(1960)
+    addResistFilter(svg, 'resist', 7, 9)
+    const g = el('g', { fill: 'none', stroke: '#d6def4', 'stroke-linecap': 'round', filter: 'url(#resist)', opacity: '0.92' }, svg)
+    const size = 200
+    for (let row = 0; row < 6; row++) {
+      for (let col = 0; col < 6; col++) {
+        const x = col * size
+        const y = row * size
+        const cx = x + size / 2
+        const cy = y + size / 2
+        el('rect', { x: x + 8, y: y + 8, width: size - 16, height: size - 16, 'stroke-width': 5 }, g)
+        el('rect', { x: x + 18, y: y + 18, width: size - 36, height: size - 36, 'stroke-width': 2.5 }, g)
+        const motif = (row * 2 + col) % 5
+        if (motif === 0) {
+          for (let r = 66; r > 8; r -= 16) el('circle', { cx, cy, r, 'stroke-width': 6 }, g)
+        } else if (motif === 1) {
+          for (let i = 0; i < 5; i++) {
+            for (let j = 0; j < 5; j++) el('circle', { cx: x + 44 + i * 28, cy: y + 44 + j * 28, r: 8 + rand() * 2, fill: '#d6def4', stroke: 'none' }, g)
+          }
+        } else if (motif === 2) {
+          for (let k = 0; k < 5; k++) {
+            let d = `M ${x + 34} ${y + 46 + k * 27}`
+            for (let s = 0; s < 8; s++) d += ` l 16 ${s % 2 ? 12 : -12}`
+            el('path', { d, 'stroke-width': 6 }, g)
+          }
+        } else if (motif === 3) {
+          for (let a = 0; a < 4; a++) {
+            el('ellipse', { cx: cx, cy: cy - 38, rx: 18, ry: 38, 'stroke-width': 6, transform: `rotate(${a * 90 + 45} ${cx} ${cy})` }, g)
+          }
+          el('circle', { cx, cy, r: 9, fill: '#d6def4', stroke: 'none' }, g)
+        } else {
+          let d = `M ${cx} ${cy}`
+          for (let t = 0; t < 22; t += 0.25) {
+            const r = 3.2 * t
+            d += ` L ${(cx + Math.cos(t) * r).toFixed(1)} ${(cy + Math.sin(t) * r).toFixed(1)}`
+          }
+          el('path', { d, 'stroke-width': 6 }, g)
+        }
+      }
+    }
+    // Crackle veins where the starch broke in the dye bath.
+    const veins = el('g', { stroke: '#b8c4e6', 'stroke-width': 1.6, fill: 'none', opacity: '0.55' }, svg)
+    for (let i = 0; i < 70; i++) {
+      let px = rand() * 1200
+      let py = rand() * 1200
+      let d = `M ${px.toFixed(1)} ${py.toFixed(1)}`
+      for (let s = 0; s < 6; s++) {
+        px += (rand() - 0.5) * 70
+        py += (rand() - 0.5) * 70
+        d += ` L ${px.toFixed(1)} ${py.toFixed(1)}`
+      }
+      el('path', { d }, veins)
+    }
+  }
+
+  // Aso-oke: narrow hand-woven strips sewn side by side.
+  function drawAsoOke(svg) {
+    const rand = rng(66)
+    const bands = [
+      [64, '#0f6b41'], [10, '#1c1a19'], [30, '#c99a2e'], [18, '#efe6d2'], [84, '#6d1f2b'],
+      [8, '#c99a2e'], [42, '#0f6b41'], [6, '#1c1a19'], [58, '#efe6d2'], [12, '#c99a2e'],
+      [26, '#6d1f2b'], [12, '#efe6d2']
+    ]
+    let x = 0
+    let i = 0
+    while (x < 1200) {
+      const [w, color] = bands[i % bands.length]
+      el('rect', { x, y: 0, width: w, height: 1200, fill: color }, svg)
+      if (color === '#efe6d2' && w > 40) {
+        // Openwork holes typical of hand-loomed aso-oke.
+        for (let y = 24; y < 1200; y += 36) {
+          el('rect', { x: x + w / 2 - 5, y, width: 10, height: 10, fill: '#c99a2e', opacity: 0.75, transform: `rotate(45 ${x + w / 2} ${y + 5})` }, svg)
+        }
+      }
+      if (color === '#6d1f2b' && w > 60) {
+        for (let y = 0; y < 1200; y += 22) {
+          el('rect', { x: x + 14, y, width: w - 28, height: 3, fill: '#c99a2e', opacity: 0.55 }, svg)
+        }
+      }
+      x += w
+      i++
+    }
+    // Weft texture.
+    const weft = el('g', {}, svg)
+    for (let y = 0; y < 1200; y += 5) {
+      el('rect', { x: 0, y, width: 1200, height: 1.6, fill: '#000', opacity: (0.05 + rand() * 0.05).toFixed(3) }, weft)
+    }
+    // Seams where strips are joined.
+    for (let s = 0; s < 1200; s += 180) {
+      el('rect', { x: s, y: 0, width: 2, height: 1200, fill: '#000', opacity: 0.18 }, svg)
+    }
+  }
+
+  // Oniko: tied-and-bound rings, soft organic edges.
+  function drawOniko(svg) {
+    addResistFilter(svg, 'dye', 3, 22)
+    const defs = svg.querySelector('defs')
+    const grad = el('radialGradient', { id: 'bloom' }, defs)
+    el('stop', { offset: '0%', 'stop-color': '#dfe6f7', 'stop-opacity': '0.95' }, grad)
+    el('stop', { offset: '55%', 'stop-color': '#c7d1ee', 'stop-opacity': '0.45' }, grad)
+    el('stop', { offset: '100%', 'stop-color': '#c7d1ee', 'stop-opacity': '0' }, grad)
+    const g = el('g', { filter: 'url(#dye)' }, svg)
+    const step = 300
+    for (let row = -1; row < 6; row++) {
+      for (let col = -1; col < 6; col++) {
+        const cx = col * step + (row % 2 ? step / 2 : 0)
+        const cy = row * step * 0.86
+        el('circle', { cx, cy, r: 120, fill: 'url(#bloom)' }, g)
+        for (let r = 30; r <= 120; r += 30) {
+          el('circle', { cx, cy, r, fill: 'none', stroke: '#e4e9f8', 'stroke-width': r === 120 ? 5 : 9, opacity: r === 120 ? 0.5 : 0.8 }, g)
+        }
+        el('circle', { cx, cy, r: 10, fill: '#eef2fb' }, g)
+      }
+    }
+  }
+
+  function drawSkyline(group) {
+    // Abstracted Lagos Island skyline.
+    const towers = [
+      [150, 600, 50, 90], [205, 600, 38, 140], [248, 600, 62, 205], [318, 600, 44, 120],
+      [368, 600, 70, 250], [445, 600, 40, 160], [490, 600, 58, 290], [555, 600, 46, 185],
+      [606, 600, 74, 230], [686, 600, 36, 130], [728, 600, 56, 175], [790, 600, 60, 100]
+    ]
+    for (const [x, base, w, h] of towers) {
+      el('rect', { x, y: base - h, width: w, height: h }, group)
+      for (let wy = base - h + 22; wy < base - 16; wy += 26) {
+        el('line', { x1: x + 10, y1: wy, x2: x + w - 10, y2: wy, 'stroke-width': 2.5, opacity: 0.6 }, group)
+      }
+    }
+    el('line', { x1: 110, y1: 600, x2: 890, y2: 600 }, group)
+    // Spire on the tallest tower.
+    el('line', { x1: 519, y1: 310, x2: 519, y2: 262 }, group)
+  }
+
+  function drawPillars(group) {
+    for (let x = 120; x <= 880; x += 38) {
+      const t = (x - 500) / 410
+      const top = 712 - 22 * (1 - t * t)
+      el('line', { x1: x, y1: top + 1, x2: x, y2: 744 }, group)
+    }
+  }
+
+  function drawRice(group) {
+    const rand = rng(1001)
+    for (let i = 0; i < 160; i++) {
+      const x = 310 + rand() * 380
+      const y = 400 + rand() * 120
+      const a = rand() * Math.PI
+      el('line', { x1: x, y1: y, x2: x + Math.cos(a) * 12, y2: y + Math.sin(a) * 12 }, group)
+    }
+  }
+
+  document.querySelectorAll('svg[data-pattern="adire"]').forEach(drawAdire)
+  document.querySelectorAll('svg[data-pattern="asooke"]').forEach(drawAsoOke)
+  document.querySelectorAll('svg[data-pattern="oniko"]').forEach(drawOniko)
+  document.querySelectorAll('[data-skyline]').forEach(drawSkyline)
+  document.querySelectorAll('[data-pillars]').forEach(drawPillars)
+  document.querySelectorAll('[data-rice]').forEach(drawRice)
+
+  const id = location.hash.slice(1)
+  if (id) {
+    document.body.classList.add('single')
+    document.getElementById(id)?.classList.add('active')
+  } else {
+    document.body.classList.add('preview')
+  }
+  document.fonts.ready.then(() => { document.title = 'ready' })
+</script>
+</body>
+</html>
