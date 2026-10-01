@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { Product } from '~/data/products'
-import { createHangingGarment } from './assets'
+import { HangingGarment } from './assets'
 import { GARMENT_SPECS } from './garment'
 import { createRail } from './hardware'
 import { createStage, damp, fitDistance, prefersReducedMotion, type Stage } from './stage'
@@ -8,25 +8,36 @@ import { createStage, damp, fitDistance, prefersReducedMotion, type Stage } from
 const SPACING = 0.46
 const ROD_Y = 0.62
 /** Pieces hang side-on along the rail, like a real shop rack. */
-const REST_TURN = 1.18
+const REST_TURN = 1.32
 const HOVER_SCALE = 0.1
 const HOVER_FORWARD = 0.1
-const HOVER_TILT = -0.07
+const HOVER_TILT = -0.05
+/** Hold time before a touch press picks a piece up instead of panning. */
+const LONG_PRESS_MS = 320
+const DRAG_THRESHOLD = 6
 
 interface RackItem {
   product: Product
-  group: THREE.Group
-  garment: THREE.Mesh | null
-  baseX: number
+  garment: HangingGarment
+  slot: number
   x: number
   rest: number
   phase: number
   open: number
-  swing: number
-  appear: number
   /** How far neighbours slide aside when this piece turns to face front. */
   push: number
   length: number
+}
+
+interface Press {
+  id: number
+  type: string
+  x: number
+  y: number
+  index: number | null
+  startPan: number
+  moved: boolean
+  timer: ReturnType<typeof setTimeout> | null
 }
 
 export interface RackOptions {
@@ -34,6 +45,8 @@ export interface RackOptions {
   resolveImage: (product: Product) => string
   onHover: (index: number | null) => void
   onSelect: (index: number) => void
+  /** Called with product indices in rail order after a piece is moved. */
+  onReorder?: (order: number[]) => void
   /** Element positioned under the hovered piece (the product name). */
   label?: HTMLElement | null
 }
@@ -46,6 +59,7 @@ function seeded(i: number) {
 export class RackController {
   private stage: Stage
   private items: RackItem[] = []
+  private order: number[] = []
   private rail: THREE.Group
   private raycaster = new THREE.Raycaster()
   private plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -0.05)
@@ -58,27 +72,30 @@ export class RackController {
   private hovered: number | null = null
   private pointerInside = false
 
+  private press: Press | null = null
+  private carry: { index: number, offset: number, x: number } | null = null
+
   private pan = 0
   private panTarget = 0
   private panLimit = 0
   private centerY = 0
   private distance = 8
-  private drag: { id: number, x: number, y: number, startPan: number, moved: boolean, time: number } | null = null
 
   private frame = 0
   private last = 0
   private time = 0
   private paused = false
   private reducedMotion: boolean
+  private span: number
   private railLength: number
 
   constructor(private container: HTMLElement, private options: RackOptions) {
     this.reducedMotion = prefersReducedMotion()
     const count = options.products.length
-    const span = (count - 1) * SPACING
-    this.railLength = span + 0.9
+    this.span = (count - 1) * SPACING
+    this.railLength = this.span + 0.9
 
-    this.stage = createStage(container, stage => this.frame3D(stage))
+    this.stage = createStage(container, stage => this.frame3D(stage), { fov: 24 })
     const { scene } = this.stage
 
     this.rail = createRail(this.railLength)
@@ -87,28 +104,23 @@ export class RackController {
 
     options.products.forEach((product, i) => {
       const spec = GARMENT_SPECS[product.garment]
+      const garment = new HangingGarment(product, options.resolveImage(product), scene, { lift: 0.08 })
       const item: RackItem = {
         product,
-        group: new THREE.Group(),
-        garment: null,
-        baseX: -span / 2 + i * SPACING,
-        x: -span / 2 + i * SPACING,
-        rest: REST_TURN + (seeded(i) - 0.5) * 0.16,
+        garment,
+        slot: i,
+        x: this.slotX(i),
+        rest: REST_TURN + (seeded(i) - 0.5) * 0.12,
         phase: seeded(i + 40) * Math.PI * 2,
         open: 0,
-        swing: 0,
-        appear: 0,
         push: (spec.width * (1 + HOVER_SCALE) - SPACING) / 2 + 0.06,
         length: spec.drop + spec.height
       }
-      item.group = createHangingGarment(product, options.resolveImage(product), (mesh, asset) => {
-        item.garment = mesh
-        item.length = asset.spec.drop + asset.spec.height
-      })
-      item.group.rotation.y = item.rest
-      item.group.position.set(item.baseX, ROD_Y, 0)
-      scene.add(item.group)
+      garment.hanger.rotation.y = item.rest
+      garment.hanger.position.set(item.x, ROD_Y, 0)
+      scene.add(garment.hanger)
       this.items.push(item)
+      this.order.push(i)
     })
 
     this.frame3D(this.stage)
@@ -116,12 +128,16 @@ export class RackController {
     this.start()
   }
 
+  private slotX(slot: number) {
+    return -this.span / 2 + slot * SPACING
+  }
+
   /** Fit the whole rail on wide screens; on narrow screens zoom in and allow panning. */
   private frame3D(stage: Stage) {
     const { camera } = stage
     const top = ROD_Y + 0.1
     const bottom = ROD_Y - (GARMENT_SPECS.tee.drop + GARMENT_SPECS.tee.height) * (1 + HOVER_SCALE) - 0.04
-    const fitH = (top - bottom) * 1.1
+    const fitH = (top - bottom) * 1.12
     this.centerY = (top + bottom) / 2
     const fullW = this.railLength + 0.35
     const aspect = camera.aspect
@@ -144,6 +160,7 @@ export class RackController {
   private bind() {
     const el = this.stage.renderer.domElement
     el.style.touchAction = 'pan-y'
+    el.style.userSelect = 'none'
     el.addEventListener('pointermove', this.onPointerMove)
     el.addEventListener('pointerdown', this.onPointerDown)
     el.addEventListener('pointerup', this.onPointerUp)
@@ -160,12 +177,18 @@ export class RackController {
     el.removeEventListener('pointerleave', this.onPointerLeave)
   }
 
-  private pick(clientX: number, clientY: number): number | null {
+  /** World-space point on the rail plane under the pointer. */
+  private worldAt(clientX: number, clientY: number) {
     const rect = this.stage.renderer.domElement.getBoundingClientRect()
     this.pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1)
     this.raycaster.setFromCamera(this.pointer, this.stage.camera)
-    if (!this.raycaster.ray.intersectPlane(this.plane, this.hit)) return null
-    const { x, y } = this.hit
+    return this.raycaster.ray.intersectPlane(this.plane, this.hit)
+  }
+
+  private pick(clientX: number, clientY: number): number | null {
+    const point = this.worldAt(clientX, clientY)
+    if (!point) return null
+    const { x, y } = point
     let best: number | null = null
     let bestScore = Infinity
     this.items.forEach((item, i) => {
@@ -183,51 +206,79 @@ export class RackController {
     return best
   }
 
-  private onPointerMove = (e: PointerEvent) => {
-    this.pointerInside = true
-    if (this.drag && e.pointerId === this.drag.id) {
-      const dx = e.clientX - this.drag.x
-      if (Math.abs(dx) > 6 || Math.abs(e.clientY - this.drag.y) > 6) this.drag.moved = true
-      if (this.drag.moved && this.panLimit > 0) {
-        const worldPerPx = (2 * this.distance * Math.tan(THREE.MathUtils.degToRad(this.stage.camera.fov) / 2)) / this.stage.size.height
-        this.panTarget = THREE.MathUtils.clamp(this.drag.startPan - dx * worldPerPx, -this.panLimit, this.panLimit)
-      }
-    }
-    if (e.pointerType === 'mouse') {
-      this.pointerIndex = this.pick(e.clientX, e.clientY)
+  private onPointerDown = (e: PointerEvent) => {
+    const index = this.pick(e.clientX, e.clientY)
+    this.press = { id: e.pointerId, type: e.pointerType, x: e.clientX, y: e.clientY, index, startPan: this.panTarget, moved: false, timer: null }
+    this.stage.renderer.domElement.setPointerCapture(e.pointerId)
+    if (e.pointerType !== 'mouse') {
+      // Touch: preview the piece under the finger; hold to pick it up.
+      this.pointerIndex = index
       this.updateHover()
+      if (index !== null) {
+        this.press.timer = setTimeout(() => {
+          if (this.press && !this.press.moved) {
+            this.beginCarry(index, e.clientX, e.clientY)
+            navigator.vibrate?.(8)
+          }
+        }, LONG_PRESS_MS)
+      }
     }
   }
 
-  private onPointerDown = (e: PointerEvent) => {
-    this.drag = { id: e.pointerId, x: e.clientX, y: e.clientY, startPan: this.panTarget, moved: false, time: performance.now() }
-    if (e.pointerType !== 'mouse') {
-      // Touch: preview the piece under the finger.
+  private onPointerMove = (e: PointerEvent) => {
+    this.pointerInside = true
+    const press = this.press
+    if (press && e.pointerId === press.id) {
+      const dx = e.clientX - press.x
+      if (!press.moved && Math.hypot(dx, e.clientY - press.y) > DRAG_THRESHOLD) {
+        press.moved = true
+        if (press.timer) clearTimeout(press.timer)
+        if (press.type === 'mouse' && press.index !== null && !this.carry) this.beginCarry(press.index, press.x, press.y)
+      }
+      if (this.carry) {
+        this.moveCarry(e.clientX, e.clientY)
+        return
+      }
+      if (press.moved && this.panLimit > 0) {
+        const worldPerPx = (2 * this.distance * Math.tan(THREE.MathUtils.degToRad(this.stage.camera.fov) / 2)) / this.stage.size.height
+        this.panTarget = THREE.MathUtils.clamp(press.startPan - dx * worldPerPx, -this.panLimit, this.panLimit)
+      }
+    }
+    if (e.pointerType === 'mouse' && !this.carry) {
       this.pointerIndex = this.pick(e.clientX, e.clientY)
       this.updateHover()
     }
   }
 
   private onPointerUp = (e: PointerEvent) => {
-    const drag = this.drag
-    this.drag = null
-    if (!drag || drag.moved || e.pointerId !== drag.id) {
-      if (e.pointerType !== 'mouse') this.clearPointer()
-      return
+    const press = this.press
+    if (!press || e.pointerId !== press.id) return
+    if (press.timer) clearTimeout(press.timer)
+    this.press = null
+    if (this.carry) {
+      this.endCarry()
+    } else if (!press.moved) {
+      const index = this.pick(e.clientX, e.clientY)
+      if (index !== null) this.options.onSelect(index)
     }
-    const index = this.pick(e.clientX, e.clientY)
-    if (index !== null) this.options.onSelect(index)
-    if (e.pointerType !== 'mouse') this.clearPointer()
+    if (e.pointerType === 'mouse') {
+      this.pointerIndex = this.pick(e.clientX, e.clientY)
+      this.updateHover()
+    } else {
+      this.clearPointer()
+    }
   }
 
   private onPointerCancel = () => {
-    this.drag = null
+    if (this.press?.timer) clearTimeout(this.press.timer)
+    this.press = null
+    if (this.carry) this.endCarry()
     this.clearPointer()
   }
 
   private onPointerLeave = (e: PointerEvent) => {
     this.pointerInside = false
-    if (e.pointerType === 'mouse') this.clearPointer()
+    if (e.pointerType === 'mouse' && !this.carry) this.clearPointer()
   }
 
   private clearPointer() {
@@ -235,11 +286,49 @@ export class RackController {
     this.updateHover()
   }
 
+  /* ------------------------------------------------------- drag to reorder */
+
+  private beginCarry(index: number, clientX: number, clientY: number) {
+    const point = this.worldAt(clientX, clientY)
+    const item = this.items[index]
+    if (!point || !item) return
+    this.carry = { index, offset: item.x - point.x, x: item.x }
+    this.pointerIndex = index
+    this.updateHover()
+  }
+
+  private moveCarry(clientX: number, clientY: number) {
+    const carry = this.carry
+    const point = this.worldAt(clientX, clientY)
+    if (!carry || !point) return
+    const limit = this.span / 2 + 0.2
+    carry.x = THREE.MathUtils.clamp(point.x + carry.offset, -limit, limit)
+    const slot = THREE.MathUtils.clamp(Math.round((carry.x + this.span / 2) / SPACING), 0, this.items.length - 1)
+    const item = this.items[carry.index]!
+    if (slot !== item.slot) {
+      this.order.splice(item.slot, 1)
+      this.order.splice(slot, 0, carry.index)
+      this.order.forEach((itemIndex, s) => {
+        this.items[itemIndex]!.slot = s
+      })
+    }
+    // Keep panned views following the piece near the edges.
+    if (this.panLimit > 0) this.panTarget = THREE.MathUtils.clamp(carry.x * 0.6, -this.panLimit, this.panLimit)
+  }
+
+  private endCarry() {
+    this.carry = null
+    this.options.onReorder?.([...this.order])
+  }
+
+  /* ------------------------------------------------------------- hovering */
+
   private updateHover() {
-    const next = this.pointerIndex ?? (this.pointerInside ? null : this.keyboardIndex)
+    const next = this.carry?.index ?? this.pointerIndex ?? (this.pointerInside ? null : this.keyboardIndex)
+    const el = this.stage.renderer.domElement
+    el.style.cursor = this.carry ? 'grabbing' : this.pointerIndex !== null ? 'pointer' : (this.panLimit > 0 ? 'grab' : 'default')
     if (next === this.hovered) return
     this.hovered = next
-    this.stage.renderer.domElement.style.cursor = this.pointerIndex !== null ? 'pointer' : (this.panLimit > 0 ? 'grab' : 'default')
     this.options.onHover(next)
   }
 
@@ -248,10 +337,9 @@ export class RackController {
     this.keyboardIndex = index
     if (index !== null) {
       const item = this.items[index]
-      if (item) this.panTarget = THREE.MathUtils.clamp(item.baseX, -this.panLimit, this.panLimit)
+      if (item) this.panTarget = THREE.MathUtils.clamp(this.slotX(item.slot), -this.panLimit, this.panLimit)
     }
     this.updateHover()
-    if (this.paused) this.render()
   }
 
   /* ---------------------------------------------------------------- loop */
@@ -285,7 +373,7 @@ export class RackController {
     this.time += dt
     const t = this.time
     const speed = this.reducedMotion ? 30 : 9
-    const swayAmount = this.reducedMotion ? 0 : 1
+    const sway = this.reducedMotion ? 0 : 1
 
     for (let i = 0; i < this.items.length; i++) {
       const item = this.items[i]!
@@ -294,31 +382,29 @@ export class RackController {
 
     for (let i = 0; i < this.items.length; i++) {
       const item = this.items[i]!
-      let x = item.baseX
-      for (let j = 0; j < this.items.length; j++) {
-        if (j === i) continue
-        const other = this.items[j]!
-        x += Math.sign(i - j) * other.push * other.open
+      const carried = this.carry?.index === i
+      let targetX = this.slotX(item.slot)
+      for (const other of this.items) {
+        if (other === item) continue
+        targetX += Math.sign(item.slot - other.slot) * other.push * other.open
       }
-      const velocity = (x - item.x) / Math.max(dt, 1e-4)
-      item.x = x
-      item.swing = damp(item.swing, THREE.MathUtils.clamp(-velocity * 0.05, -0.1, 0.1) * swayAmount, 6, dt)
+      if (carried) targetX = this.carry!.x
+      item.x = damp(item.x, targetX, carried ? 24 : 11, dt)
 
       const e = item.open * item.open * (3 - 2 * item.open)
-      const sway = swayAmount * (1 - 0.75 * e)
-      const g = item.group
-      g.position.set(x, ROD_Y, HOVER_FORWARD * e)
-      g.rotation.set(
+      const idle = sway * (1 - 0.8 * e)
+      const hanger = item.garment.hanger
+      hanger.position.set(item.x, ROD_Y, HOVER_FORWARD * e)
+      hanger.rotation.set(
         HOVER_TILT * e,
-        item.rest * (1 - e) + sway * 0.035 * Math.sin(t * 0.55 + item.phase * 1.3),
-        sway * 0.012 * Math.sin(t * 0.9 + item.phase) + item.swing
+        item.rest * (1 - e) + idle * 0.03 * Math.sin(t * 0.55 + item.phase * 1.3),
+        idle * 0.01 * Math.sin(t * 0.9 + item.phase)
       )
-      g.scale.setScalar(1 + HOVER_SCALE * e)
+      hanger.scale.setScalar(1 + HOVER_SCALE * e)
 
-      if (item.garment) {
-        item.appear = damp(item.appear, 1, 5, dt)
-        item.garment.position.y = -GARMENT_SPECS[item.product.garment].drop + (1 - item.appear) * 0.06
-      }
+      // Hovered pieces firm up into their pressed shape; carried ones swing freely.
+      const rigidity = carried ? 0.25 : 0.9 * e
+      item.garment.update(dt, rigidity, sway)
     }
 
     this.pan = damp(this.pan, this.panTarget, 10, dt)
@@ -332,12 +418,10 @@ export class RackController {
     const item = this.items[this.hovered]
     if (!item) return
     const scale = 1 + HOVER_SCALE * item.open
-    this.projected.set(item.x, ROD_Y - item.length * scale - 0.03, item.group.position.z).project(this.stage.camera)
+    this.projected.set(item.x, ROD_Y - item.length * scale - 0.03, item.garment.hanger.position.z).project(this.stage.camera)
     const { width, height } = this.stage.size
-    const px = (this.projected.x * 0.5 + 0.5) * width
-    const py = (-this.projected.y * 0.5 + 0.5) * height
-    label.style.setProperty('--label-x', `${px.toFixed(1)}px`)
-    label.style.setProperty('--label-y', `${py.toFixed(1)}px`)
+    label.style.setProperty('--label-x', `${((this.projected.x * 0.5 + 0.5) * width).toFixed(1)}px`)
+    label.style.setProperty('--label-y', `${((-this.projected.y * 0.5 + 0.5) * height).toFixed(1)}px`)
   }
 
   private render() {
@@ -346,7 +430,9 @@ export class RackController {
 
   dispose() {
     cancelAnimationFrame(this.frame)
+    if (this.press?.timer) clearTimeout(this.press.timer)
     this.unbind()
+    for (const item of this.items) item.garment.dispose()
     this.rail.traverse((o) => {
       if (o instanceof THREE.Mesh) o.geometry.dispose()
     })

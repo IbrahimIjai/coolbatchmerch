@@ -20,7 +20,7 @@ export function prefersReducedMotion() {
  * faint shadow onto an invisible back wall, and a room environment so the
  * chrome rail has something to reflect.
  */
-export function createStage(container: HTMLElement, onResize: (stage: Stage) => void, options: { shadows?: boolean } = {}): Stage {
+export function createStage(container: HTMLElement, onResize: (stage: Stage) => void, options: { shadows?: boolean, fov?: number } = {}): Stage {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.setClearColor(0x000000, 0)
@@ -42,11 +42,11 @@ export function createStage(container: HTMLElement, onResize: (stage: Stage) => 
   scene.environment = envMap
   scene.environmentIntensity = 0.55
 
-  const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 50)
+  const camera = new THREE.PerspectiveCamera(options.fov ?? 28, 1, 0.1, 80)
 
   scene.add(new THREE.HemisphereLight('#ffffff', '#d9d1c3', 0.55))
   const key = new THREE.DirectionalLight('#fff4e6', 1.75)
-  key.position.set(-2.4, 4.2, 5)
+  key.position.set(-1.6, 3.4, 6)
   key.castShadow = true
   key.shadow.mapSize.set(2048, 2048)
   key.shadow.camera.left = -3.6
@@ -63,8 +63,8 @@ export function createStage(container: HTMLElement, onResize: (stage: Stage) => 
   rim.position.set(3, 1.5, -2)
   scene.add(rim)
 
-  const wall = new THREE.Mesh(new THREE.PlaneGeometry(16, 8), new THREE.ShadowMaterial({ opacity: 0.085 }))
-  wall.position.z = -0.8
+  const wall = new THREE.Mesh(new THREE.PlaneGeometry(16, 8), new THREE.ShadowMaterial({ opacity: 0.06 }))
+  wall.position.z = -0.9
   wall.receiveShadow = true
   scene.add(wall)
 

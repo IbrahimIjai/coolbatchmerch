@@ -10,6 +10,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [index: number]
   hover: [index: number | null]
+  reorder: [order: number[]]
 }>()
 
 const container = useTemplateRef<HTMLElement>('container')
@@ -38,9 +39,14 @@ function mount() {
       if (index !== null) lastHovered.value = index
       emit('hover', index)
     },
-    onSelect: index => emit('select', index)
+    onSelect: index => emit('select', index),
+    onReorder: order => emit('reorder', order)
   })
   rack.setPaused(!!props.paused)
+}
+
+function focus(index: number | null) {
+  rack?.setFocus(index)
 }
 
 onMounted(mount)
@@ -70,8 +76,8 @@ onBeforeUnmount(() => {
       <li v-for="(product, i) in products" :key="product.id">
         <button
           type="button"
-          @focus="rack?.setFocus(i)"
-          @blur="rack?.setFocus(null)"
+          @focus="focus(i)"
+          @blur="focus(null)"
           @click="emit('select', i)"
         >
           View {{ product.name }}, {{ product.label }}

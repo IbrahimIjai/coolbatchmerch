@@ -49,11 +49,11 @@ function hookGeometry(baseY: number) {
 function teeHangerGeometry() {
   return cached('hanger:tee', () => {
     const s = new THREE.Shape()
-    s.moveTo(-0.4, -0.245)
-    s.quadraticCurveTo(0, -0.06, 0.4, -0.245)
-    s.quadraticCurveTo(0.426, -0.262, 0.4, -0.28)
-    s.quadraticCurveTo(0, -0.1, -0.4, -0.28)
-    s.quadraticCurveTo(-0.426, -0.262, -0.4, -0.245)
+    s.moveTo(-0.36, -0.236)
+    s.quadraticCurveTo(0, -0.07, 0.36, -0.236)
+    s.quadraticCurveTo(0.386, -0.253, 0.36, -0.27)
+    s.quadraticCurveTo(0, -0.11, -0.36, -0.27)
+    s.quadraticCurveTo(-0.386, -0.253, -0.36, -0.236)
     const g = new THREE.ExtrudeGeometry(s, { depth: 0.022, bevelEnabled: true, bevelThickness: 0.006, bevelSize: 0.005, bevelSegments: 3, curveSegments: 32 })
     g.translate(0, 0, -0.011)
     return g

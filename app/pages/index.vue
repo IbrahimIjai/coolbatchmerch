@@ -10,6 +10,10 @@ useSeoMeta({
   ogImage: '/merch/sixty-six.png'
 })
 
+// Rail order (product indices). Pieces can be dragged along the rail to re-order them;
+// the overlay then browses in that same order.
+const order = ref(products.map((_, i) => i))
+const railProducts = computed(() => order.value.map(i => products[i]!))
 const selected = ref(0)
 const modalOpen = ref(false)
 const aboutOpen = ref(false)
@@ -21,7 +25,7 @@ onMounted(() => {
 })
 
 function openProduct(index: number) {
-  selected.value = index
+  selected.value = Math.max(0, order.value.indexOf(index))
   modalOpen.value = true
 }
 </script>
@@ -42,6 +46,7 @@ function openProduct(index: number) {
             :products="products"
             :paused="modalOpen"
             @select="openProduct"
+            @reorder="order = $event"
           />
           <RackFallback v-else :products="products" @select="openProduct" />
 
@@ -70,7 +75,7 @@ function openProduct(index: number) {
 
     <SiteTicker @subscribe="contactOpen = true" />
 
-    <ProductModal v-model:open="modalOpen" v-model:index="selected" :products="products" />
+    <ProductModal v-model:open="modalOpen" v-model:index="selected" :products="railProducts" />
     <InfoPanel v-model:open="aboutOpen" kind="about" />
     <InfoPanel v-model:open="contactOpen" kind="contact" />
   </div>

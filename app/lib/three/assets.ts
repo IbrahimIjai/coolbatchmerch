@@ -1,11 +1,13 @@
 import * as THREE from 'three'
 import type { Product } from '~/data/products'
 import { buildGarmentGeometry, getKnitCanvas, paintGarment, type GarmentSpec } from './garment'
+import { ClothSim } from './cloth'
 import { createHanger } from './hardware'
 
 export interface GarmentAsset {
   spec: GarmentSpec
   geometry: THREE.BufferGeometry
+  insideAt: (x: number, y: number) => boolean
   materials: [THREE.MeshStandardMaterial, THREE.MeshStandardMaterial]
   /** Flat image of the painted front, for 2D fallbacks. */
   front: HTMLCanvasElement
@@ -49,9 +51,11 @@ export function loadGarment(product: Product, imageUrl: string) {
   let pending = cache.get(key)
   if (!pending) {
     pending = paintGarment(product, imageUrl).then((canvases) => {
+      const { geometry, insideAt } = buildGarmentGeometry(product.garment, canvases, product.id)
       const asset: GarmentAsset = {
         spec: canvases.spec,
-        geometry: buildGarmentGeometry(product.garment, canvases, product.id),
+        geometry,
+        insideAt,
         materials: [fabricMaterial(canvases.front), fabricMaterial(canvases.back)],
         front: canvases.front
       }
@@ -63,21 +67,41 @@ export function loadGarment(product: Product, imageUrl: string) {
 }
 
 /**
- * A garment on its hanger. The group origin is the point where the hook meets
- * the rail, so rotating the group swings and turns the piece like the real thing.
+ * A garment on its hanger. `hanger` is placed at the point where the hook
+ * meets the rail; move and turn it like the real thing. The cloth mesh lives in
+ * world space (added to `scene`) and follows the hanger through the solver.
  */
-export function createHangingGarment(product: Product, imageUrl: string, onReady?: (mesh: THREE.Mesh, asset: GarmentAsset) => void) {
-  const group = new THREE.Group()
-  group.add(createHanger(product.garment))
-  loadGarment(product, imageUrl).then((asset) => {
-    const mesh = new THREE.Mesh(asset.geometry, asset.materials)
-    mesh.position.y = -asset.spec.drop
-    mesh.castShadow = true
-    mesh.receiveShadow = true
-    group.add(mesh)
-    onReady?.(mesh, asset)
-  }).catch((error) => {
-    console.error(`[rack] could not build "${product.name}"`, error)
-  })
-  return group
+export class HangingGarment {
+  readonly hanger: THREE.Group
+  cloth: ClothSim | null = null
+  private disposed = false
+
+  constructor(product: Product, imageUrl: string, private scene: THREE.Scene, options: { lift?: number } = {}) {
+    this.hanger = createHanger(product.garment)
+    loadGarment(product, imageUrl).then((asset) => {
+      if (this.disposed) return
+      this.cloth = new ClothSim(product.garment, asset)
+      this.hanger.updateWorldMatrix(true, false)
+      this.cloth.reset(this.hanger.matrixWorld, options.lift ?? 0)
+      this.scene.add(this.cloth.mesh)
+    }).catch((error) => {
+      console.error(`[rack] could not build "${product.name}"`, error)
+    })
+  }
+
+  update(dt: number, rigidity: number, draught = 1) {
+    if (!this.cloth) return
+    this.hanger.updateWorldMatrix(true, false)
+    this.cloth.update(dt, this.hanger.matrixWorld, rigidity, draught)
+  }
+
+  dispose() {
+    this.disposed = true
+    this.hanger.removeFromParent()
+    if (this.cloth) {
+      this.scene.remove(this.cloth.mesh)
+      this.cloth.dispose()
+      this.cloth = null
+    }
+  }
 }
