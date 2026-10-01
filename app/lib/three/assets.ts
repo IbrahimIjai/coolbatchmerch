@@ -84,10 +84,15 @@ export class HangingGarment {
     })
   }
 
-  update(dt: number, rigidity: number, draught = 1) {
+  update(dt: number, rigidity: number) {
     if (!this.cloth) return
     this.hanger.updateWorldMatrix(true, false)
-    this.cloth.update(dt, this.hanger.matrixWorld, rigidity, draught)
+    this.cloth.update(dt, this.hanger.matrixWorld, rigidity)
+  }
+
+  /** A hand brushing past the fabric. */
+  brush(point: THREE.Vector3, velocity: THREE.Vector3) {
+    this.cloth?.poke(point, velocity, 0.16, 0.35)
   }
 
   dispose() {

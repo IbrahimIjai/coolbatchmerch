@@ -39,8 +39,9 @@ const arrow = {
     :close="false"
     :title="product.name"
     :description="`${product.label}. Piece ${counter}. Use the arrow keys to browse the collection.`"
+    :content="{ onOpenAutoFocus: (event: Event) => event.preventDefault() }"
     :ui="{
-      overlay: 'bg-paper/70 backdrop-blur-md',
+      overlay: 'bg-paper/85 backdrop-blur-md',
       content: 'bg-transparent shadow-none ring-0 divide-y-0'
     }"
   >
@@ -57,7 +58,12 @@ const arrow = {
         </div>
 
         <div class="relative min-h-0 flex-1">
-          <ProductViewer :products="products" :index="index" :direction="direction" class="absolute inset-0" />
+          <ProductViewer
+            :products="products"
+            :index="index"
+            :direction="direction"
+            class="absolute inset-0"
+          />
 
           <div class="pointer-events-none absolute inset-0 flex items-center justify-between px-4 sm:justify-center sm:gap-[min(48vw,560px)]">
             <UButton
@@ -89,8 +95,14 @@ const arrow = {
           <p class="text-[10px] tracking-[0.12em] text-navy/60 tabular-nums">
             {{ counter }}
           </p>
-          <Transition name="swap" mode="out-in">
-            <div :key="product.id" class="flex flex-col items-center gap-0.5">
+          <Transition
+            name="swap"
+            mode="out-in"
+          >
+            <div
+              :key="product.id"
+              class="flex flex-col items-center gap-0.5"
+            >
               <h2 class="text-xl text-navy italic sm:text-2xl">
                 {{ product.name }}
               </h2>
@@ -106,7 +118,8 @@ const arrow = {
             color="neutral"
             size="sm"
             label="See availability"
-            class="pill-button mt-3"
+            class="mt-3"
+            :ui="pillButtonUi"
           />
         </div>
       </div>

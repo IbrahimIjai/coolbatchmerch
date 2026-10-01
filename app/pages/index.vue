@@ -32,14 +32,20 @@ function openProduct(index: number) {
 
 <template>
   <div class="flex h-dvh flex-col overflow-hidden">
-    <SiteHeader @about="aboutOpen = true" @contact="contactOpen = true" />
+    <SiteHeader
+      @about="aboutOpen = true"
+      @contact="contactOpen = true"
+    />
 
     <main class="relative flex min-h-0 flex-1 flex-col">
       <h1 class="sr-only">
         {{ site.brand.name }} — the Nigeria @ 66 independence capsule
       </h1>
 
-      <div class="relative min-h-0 flex-1 transition-[filter,opacity] duration-300" :class="{ 'opacity-60': modalOpen }">
+      <div
+        class="relative min-h-0 flex-1 transition-[filter,opacity] duration-300"
+        :class="{ 'opacity-60': modalOpen }"
+      >
         <ClientOnly>
           <LazyRackScene
             v-if="webgl"
@@ -48,10 +54,17 @@ function openProduct(index: number) {
             @select="openProduct"
             @reorder="order = $event"
           />
-          <RackFallback v-else :products="products" @select="openProduct" />
+          <RackFallback
+            v-else
+            :products="products"
+            @select="openProduct"
+          />
 
           <template #fallback>
-            <div class="flex size-full items-start justify-center pt-[12%]" aria-hidden="true">
+            <div
+              class="flex size-full items-start justify-center pt-[12%]"
+              aria-hidden="true"
+            >
               <div class="h-1.5 w-2/3 max-w-4xl rounded-full bg-linear-to-b from-[#f4f4f4] via-[#bdbdbd] to-[#e4e4e4]" />
             </div>
           </template>
@@ -68,15 +81,25 @@ function openProduct(index: number) {
           color="neutral"
           size="sm"
           label="See availability"
-          class="pill-button"
+          :ui="pillButtonUi"
         />
       </div>
     </main>
 
     <SiteTicker @subscribe="contactOpen = true" />
 
-    <ProductModal v-model:open="modalOpen" v-model:index="selected" :products="railProducts" />
-    <InfoPanel v-model:open="aboutOpen" kind="about" />
-    <InfoPanel v-model:open="contactOpen" kind="contact" />
+    <ProductModal
+      v-model:open="modalOpen"
+      v-model:index="selected"
+      :products="railProducts"
+    />
+    <InfoPanel
+      v-model:open="aboutOpen"
+      kind="about"
+    />
+    <InfoPanel
+      v-model:open="contactOpen"
+      kind="contact"
+    />
   </div>
 </template>

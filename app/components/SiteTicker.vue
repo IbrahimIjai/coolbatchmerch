@@ -18,7 +18,10 @@ defineEmits<{ subscribe: [] }>()
       :ui="{ root: '[--duration:42s] [--gap:--spacing(7)] py-2', content: 'gap-(--gap)' }"
       aria-hidden="true"
     >
-      <template v-for="item in site.ticker" :key="item">
+      <template
+        v-for="item in site.ticker"
+        :key="item"
+      >
         <span class="text-[11px] font-medium tracking-[0.12em] whitespace-nowrap uppercase italic">{{ item }}</span>
         <span class="text-[9px] opacity-80">•</span>
       </template>

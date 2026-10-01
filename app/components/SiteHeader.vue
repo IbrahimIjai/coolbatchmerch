@@ -18,13 +18,25 @@ const navLink = {
     }"
   >
     <template #left>
-      <UButton variant="link" color="neutral" label="About" :ui="navLink" @click="$emit('about')" />
+      <UButton
+        variant="link"
+        color="neutral"
+        label="About"
+        :ui="navLink"
+        @click="$emit('about')"
+      />
     </template>
 
     <BrandWordmark />
 
     <template #right>
-      <UButton variant="link" color="neutral" label="Contact" :ui="navLink" @click="$emit('contact')" />
+      <UButton
+        variant="link"
+        color="neutral"
+        label="Contact"
+        :ui="navLink"
+        @click="$emit('contact')"
+      />
     </template>
   </UHeader>
 </template>

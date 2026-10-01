@@ -7,7 +7,7 @@ let materials: { wood: THREE.MeshPhysicalMaterial, chrome: THREE.MeshStandardMat
 
 export function getHardwareMaterials() {
   materials ??= {
-    wood: new THREE.MeshPhysicalMaterial({ color: '#6a2c1d', roughness: 0.42, clearcoat: 0.55, clearcoatRoughness: 0.3 }),
+    wood: new THREE.MeshPhysicalMaterial({ color: '#4a1d12', roughness: 0.5, clearcoat: 0.3, clearcoatRoughness: 0.45 }),
     chrome: new THREE.MeshStandardMaterial({ color: '#f2f2f2', metalness: 1, roughness: 0.14 }),
     brushed: new THREE.MeshStandardMaterial({ color: '#d9d9d9', metalness: 1, roughness: 0.32 })
   }

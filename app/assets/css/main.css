@@ -58,22 +58,3 @@ body {
   background: var(--color-navy);
   color: var(--color-paper);
 }
-
-/* Rounded outline pill used for every "See availability" call to action. */
-.pill-button {
-  border-radius: 9999px;
-  padding-inline: 1rem;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--color-navy);
-  background: transparent;
-  --tw-ring-color: rgb(39 48 79 / 55%);
-  transition: background-color 200ms ease, color 200ms ease;
-}
-
-.pill-button:hover {
-  background: var(--color-navy);
-  color: var(--color-paper);
-}

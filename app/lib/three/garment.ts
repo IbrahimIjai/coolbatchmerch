@@ -386,17 +386,20 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
   mctx.fillStyle = '#000'
   mctx.strokeStyle = '#000'
   mctx.lineWidth = 1
+  // Every triangle is added with the same 2D winding so overlapping front and
+  // back panels union (rather than cancel) under the non-zero fill rule.
   mctx.beginPath()
   for (let t = 0; t < index.length; t += 3) {
     const a = toMask(X[index[t]!]!, Y[index[t]!]!)
-    const b = toMask(X[index[t + 1]!]!, Y[index[t + 1]!]!)
-    const c = toMask(X[index[t + 2]!]!, Y[index[t + 2]!]!)
+    let b = toMask(X[index[t + 1]!]!, Y[index[t + 1]!]!)
+    let c = toMask(X[index[t + 2]!]!, Y[index[t + 2]!]!)
+    if ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) < 0) [b, c] = [c, b]
     mctx.moveTo(a[0], a[1])
     mctx.lineTo(b[0], b[1])
     mctx.lineTo(c[0], c[1])
     mctx.closePath()
   }
-  mctx.fill()
+  mctx.fill('nonzero')
   mctx.stroke()
   const alpha = mctx.getImageData(0, 0, maskW, maskH).data
   const insideAt = (x: number, y: number) => {

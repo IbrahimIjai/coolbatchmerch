@@ -60,12 +60,18 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="relative size-full">
-    <div ref="container" class="absolute inset-0" />
+    <div
+      ref="container"
+      class="absolute inset-0"
+    />
 
     <p
       ref="label"
-      class="rack-label"
-      :class="{ 'is-visible': hovered !== null }"
+      class="
+        pointer-events-none absolute top-0 left-0 translate-x-[calc(var(--label-x,50%)-50%)] translate-y-(--label-y)
+        text-[11px] tracking-[0.02em] whitespace-nowrap text-navy/70 transition-opacity duration-200
+      "
+      :class="hovered === null ? 'opacity-0' : 'opacity-100'"
       aria-hidden="true"
     >
       {{ labelText }}
@@ -73,7 +79,10 @@ onBeforeUnmount(() => {
 
     <!-- Keyboard and screen-reader access to the rack. Focus mirrors hover in 3D. -->
     <ul class="sr-only">
-      <li v-for="(product, i) in products" :key="product.id">
+      <li
+        v-for="(product, i) in products"
+        :key="product.id"
+      >
         <button
           type="button"
           @focus="focus(i)"
@@ -86,23 +95,3 @@ onBeforeUnmount(() => {
     </ul>
   </div>
 </template>
-
-<style scoped>
-.rack-label {
-  position: absolute;
-  left: 0;
-  top: 0;
-  transform: translate(calc(var(--label-x, 50%) - 50%), var(--label-y, 0));
-  white-space: nowrap;
-  pointer-events: none;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  color: color-mix(in oklab, var(--color-navy) 70%, transparent);
-  opacity: 0;
-  transition: opacity 220ms ease;
-}
-
-.rack-label.is-visible {
-  opacity: 1;
-}
-</style>

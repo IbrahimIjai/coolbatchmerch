@@ -34,8 +34,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="relative size-full">
-    <div v-if="webgl" ref="container" class="absolute inset-0" />
-    <div v-else class="absolute inset-0 flex items-center justify-center p-6">
+    <div
+      v-if="webgl"
+      ref="container"
+      class="absolute inset-0"
+    />
+    <div
+      v-else
+      class="absolute inset-0 flex items-center justify-center p-6"
+    >
       <img
         v-if="preview"
         :src="preview"

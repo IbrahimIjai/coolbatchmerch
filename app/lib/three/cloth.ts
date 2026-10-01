@@ -6,22 +6,29 @@ import type { GarmentAsset } from './assets'
  *
  * Each garment is a coarse particle grid laid over its flat silhouette. The
  * particles along the shoulders rest on the hanger and are pinned to it;
- * everything else hangs under real-scale gravity and trails the hanger with a
- * little inertia when it swings, slides or turns. The detailed garment mesh is
- * bound to this grid and deformed on the GPU, so the solver stays small.
+ * everything else hangs under real-scale gravity. Like knitted cotton, the
+ * fabric hardly stretches but bends and buckles easily, so hems trail and
+ * twist when the hanger turns, sleeves flop when it is carried, and a brush of
+ * the hand ripples through it. The detailed garment mesh is bound to this grid
+ * and deformed on the GPU, so the solver stays small.
  *
- * Fabric has memory: a shape-matching term keeps the garment close to its
- * natural hanging shape. `rigidity` raises it while a piece is being held up
- * to look at, so it presents neatly without going stiff.
+ * A faint shape memory stops the fabric drifting over time; `rigidity` raises
+ * it a little while a piece is held up to look at.
+ *
+ * Settled cloth falls asleep and simply rides along with its hanger; anything
+ * more than a tiny sway, or a brush, wakes it.
  */
 
 /** 9.81 m/s² in garment units (1 unit ≈ 0.74 m). */
 const GRAVITY = 13.2
 /** Velocity kept per step — still air around heavyweight cotton. */
-const DAMPING = 0.982
-const ITERATIONS = 10
-const STEP = 1 / 90
+const DAMPING = 0.988
+const ITERATIONS = 8
+const STEP = 1 / 75
 const MAX_STEPS = 4
+/** Particle speed (units per step) below which cloth counts as settled. */
+const REST_SPEED = 1.2e-4
+const SLEEP_AFTER = 75
 
 const BLOCK_POSITION = 0
 const BLOCK_AXIS_X = 1
@@ -113,12 +120,14 @@ export class ClothSim {
   private linkStretch: Float32Array
   private linkCompress: Float32Array
   private axes: Float32Array
-  private phase: Float32Array
   private texData: Float32Array
   private texture: THREE.DataTexture
   private materials: THREE.Material[]
   private accumulator = 0
-  private time = 0
+  private quiet = 0
+  private sleeping = false
+  private lastMatrix = new THREE.Matrix4()
+  private delta = new THREE.Matrix4()
 
   constructor(asset: GarmentAsset) {
     const { spec } = asset
@@ -134,7 +143,6 @@ export class ClothSim {
     this.pinned = new Uint8Array(n)
     this.anchor = new Int32Array(n).fill(-1)
     this.axes = new Float32Array(n * 6)
-    this.phase = new Float32Array(n)
 
     const isInside = (x: number, y: number) => asset.insideAt(x, y)
     for (let j = 0; j < rows; j++) {
@@ -144,7 +152,6 @@ export class ClothSim {
         const y = -j * cell
         this.rest.set([x, y - spec.drop, 0], k * 3)
         this.inside[k] = isInside(x, y) ? 1 : 0
-        this.phase[k] = (i * 0.37 + j * 0.61) % (Math.PI * 2)
       }
     }
 
@@ -174,13 +181,13 @@ export class ClothSim {
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
         const k = j * cols + i
-        // Woven/knit fabric barely stretches, resists compression less, and bends softly.
-        if (i + 1 < cols) addLink(k, k + 1, 1, 0.35)
-        if (j + 1 < rows) addLink(k, k + cols, 1, 0.35)
-        if (i + 1 < cols && j + 1 < rows) addLink(k, k + cols + 1, 0.9, 0.25)
-        if (i > 0 && j + 1 < rows) addLink(k, k + cols - 1, 0.9, 0.25)
-        if (i + 2 < cols) addLink(k, k + 2, 0.7, 0.2)
-        if (j + 2 < rows) addLink(k, k + cols * 2, 0.7, 0.2)
+        // Knit fabric: barely stretches, gives way under compression, bends easily.
+        if (i + 1 < cols) addLink(k, k + 1, 1, 0.12)
+        if (j + 1 < rows) addLink(k, k + cols, 1, 0.12)
+        if (i + 1 < cols && j + 1 < rows) addLink(k, k + cols + 1, 0.6, 0.08)
+        if (i > 0 && j + 1 < rows) addLink(k, k + cols - 1, 0.6, 0.08)
+        if (i + 2 < cols) addLink(k, k + 2, 0.22, 0.04)
+        if (j + 2 < rows) addLink(k, k + cols * 2, 0.22, 0.04)
       }
     }
     this.links = Int32Array.from(links)
@@ -253,6 +260,7 @@ export class ClothSim {
 
   /** Places the cloth on its hanger, optionally lifted so it drops into place. */
   reset(matrix: THREE.Matrix4, lift = 0) {
+    this.lastMatrix.copy(matrix)
     this.computeTargets(matrix)
     for (let k = 0; k < this.count; k++) {
       const o = k * 3
@@ -281,27 +289,83 @@ export class ClothSim {
    * Advances the simulation. `matrix` is the hanger's world matrix,
    * `rigidity` 0..1 blends from free-hanging cloth towards its pressed shape.
    */
-  update(dt: number, matrix: THREE.Matrix4, rigidity: number, draught = 1) {
+  update(dt: number, matrix: THREE.Matrix4, rigidity: number) {
+    if (this.sleeping) {
+      if (this.followRigidly(matrix)) return
+      this.wake()
+    }
+    this.lastMatrix.copy(matrix)
     this.accumulator = Math.min(this.accumulator + dt, STEP * MAX_STEPS)
     if (this.accumulator < STEP) return
     const e = matrix.elements
     const scale = Math.hypot(e[0]!, e[1]!, e[2]!)
-    // The garment's facing direction, for the out-of-plane draught.
-    const nx = e[8]! / scale, ny = e[9]! / scale, nz = e[10]! / scale
     this.computeTargets(matrix)
+    let speed = 0
     while (this.accumulator >= STEP) {
       this.accumulator -= STEP
-      this.time += STEP
-      this.step(STEP, scale, rigidity, draught, nx, ny, nz)
+      speed = Math.max(speed, this.step(STEP, scale, rigidity))
     }
     this.finish()
+    this.quiet = speed < REST_SPEED * scale ? this.quiet + 1 : 0
+    if (this.quiet > SLEEP_AFTER) this.sleeping = true
   }
 
-  private step(dt: number, scale: number, rigidity: number, draught: number, nx: number, ny: number, nz: number) {
-    const { pos, prev, target, inside, pinned, phase, rest } = this
+  /**
+   * While asleep, small hanger movements (an idle sway) carry the cloth along
+   * as a rigid body. Returns false when the movement is big enough to wake it.
+   */
+  private followRigidly(matrix: THREE.Matrix4) {
+    const d = this.delta.copy(this.lastMatrix).invert().premultiply(matrix)
+    const e = d.elements
+    const move = Math.abs(e[12]!) + Math.abs(e[13]!) + Math.abs(e[14]!)
+    const turn = Math.abs(e[1]!) + Math.abs(e[2]!) + Math.abs(e[6]!)
+    if (move > 0.003 || turn > 0.006) return false
+    if (move < 1e-7 && turn < 1e-7) return true
+    for (const buffer of [this.pos, this.prev]) {
+      for (let k = 0; k < this.count; k++) {
+        const o = k * 3
+        const x = buffer[o]!, y = buffer[o + 1]!, z = buffer[o + 2]!
+        buffer[o] = e[0]! * x + e[4]! * y + e[8]! * z + e[12]!
+        buffer[o + 1] = e[1]! * x + e[5]! * y + e[9]! * z + e[13]!
+        buffer[o + 2] = e[2]! * x + e[6]! * y + e[10]! * z + e[14]!
+      }
+    }
+    this.lastMatrix.copy(matrix)
+    this.finish()
+    return true
+  }
+
+  private wake() {
+    this.sleeping = false
+    this.quiet = 0
+  }
+
+  /**
+   * A hand brushing past: particles near `point` (world space, judged in the
+   * x–y plane) pick up some of `velocity`.
+   */
+  poke(point: THREE.Vector3, velocity: THREE.Vector3, radius: number, strength: number) {
+    const { pos, prev, inside, pinned } = this
+    let touched = false
+    for (let k = 0; k < this.count; k++) {
+      if (!inside[k] || pinned[k]) continue
+      const o = k * 3
+      const d = Math.hypot(pos[o]! - point.x, pos[o + 1]! - point.y)
+      if (d > radius) continue
+      const w = (1 - d / radius) ** 2 * strength * STEP
+      prev[o] = prev[o]! - velocity.x * w
+      prev[o + 1] = prev[o + 1]! - velocity.y * w * 0.4
+      prev[o + 2] = prev[o + 2]! - velocity.z * w
+      touched = true
+    }
+    if (touched) this.wake()
+  }
+
+  /** Advances one step; returns the fastest particle speed (units per step). */
+  private step(dt: number, scale: number, rigidity: number) {
+    const { pos, prev, target, inside, pinned } = this
     const dt2 = dt * dt
-    const t = this.time
-    const air = 0.06 * draught * scale
+    let speed = 0
 
     for (let k = 0; k < this.count; k++) {
       if (!inside[k]) continue
@@ -312,22 +376,20 @@ export class ClothSim {
         prev[o + 2] = pos[o + 2] = target[o + 2]!
         continue
       }
-      // A barely-there draught; lower fabric moves more freely.
-      const depth = Math.min(1, -rest[o + 1]! / 1.2)
-      const gust = air * depth * (Math.sin(t * 0.45 + phase[k]!) * 0.7 + Math.sin(t * 1.1 + phase[k]! * 1.7) * 0.3)
       const vx = (pos[o]! - prev[o]!) * DAMPING
       const vy = (pos[o + 1]! - prev[o + 1]!) * DAMPING
       const vz = (pos[o + 2]! - prev[o + 2]!) * DAMPING
+      speed = Math.max(speed, Math.abs(vx) + Math.abs(vy) + Math.abs(vz))
       prev[o] = pos[o]!
       prev[o + 1] = pos[o + 1]!
       prev[o + 2] = pos[o + 2]!
-      pos[o] = pos[o]! + vx + nx * gust * dt2
-      pos[o + 1] = pos[o + 1]! + vy + (ny * gust - GRAVITY * scale) * dt2
-      pos[o + 2] = pos[o + 2]! + vz + nz * gust * dt2
+      pos[o] = pos[o]! + vx
+      pos[o + 1] = pos[o + 1]! + vy - GRAVITY * scale * dt2
+      pos[o + 2] = pos[o + 2]! + vz
     }
 
     const { links, linkRest, linkStretch, linkCompress } = this
-    const shape = Math.min(0.6, 0.03 + rigidity * 0.3)
+    const shape = Math.min(0.4, 0.004 + rigidity * 0.18)
     for (let it = 0; it < ITERATIONS; it++) {
       for (let l = 0, c = 0; l < links.length; l += 2, c++) {
         const a = links[l]! * 3
@@ -351,7 +413,7 @@ export class ClothSim {
         pos[b + 1] = pos[b + 1]! - dy * s * wb
         pos[b + 2] = pos[b + 2]! - dz * s * wb
       }
-      if (it % 3 === 2) {
+      if (it % 2 === 1) {
         for (let k = 0; k < this.count; k++) {
           if (!inside[k] || pinned[k]) continue
           const o = k * 3
@@ -361,6 +423,7 @@ export class ClothSim {
         }
       }
     }
+    return speed
   }
 
   /** Builds per-particle frames, places ghosts and uploads the texture. */

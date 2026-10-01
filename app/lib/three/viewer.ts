@@ -200,7 +200,7 @@ export class ViewerController {
         sway * 0.006 * Math.sin(this.time * 0.8 + actor.phase)
       )
       // Firm for presentation, looser while spinning so the fabric flares.
-      actor.garment.update(dt, spinning && actor === this.current ? 0.08 : 0.35, sway)
+      actor.garment.update(dt, spinning && actor === this.current ? 0.02 : 0.2)
       if (actor.leaving && Math.abs(actor.x - actor.targetX) < 0.02) this.remove(actor)
     }
   }

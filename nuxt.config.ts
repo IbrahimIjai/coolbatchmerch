@@ -23,13 +23,6 @@ export default defineNuxtConfig({
     colorMode: false
   },
 
-  fonts: {
-    families: [
-      { name: 'Instrument Sans', provider: 'google', weights: [400, 500, 600], styles: ['normal', 'italic'] },
-      { name: 'Lobster Two', provider: 'google', weights: [700], styles: ['italic'] }
-    ]
-  },
-
   compatibilityDate: '2026-06-30',
 
   vite: {
@@ -45,5 +38,12 @@ export default defineNuxtConfig({
         braceStyle: '1tbs'
       }
     }
+  },
+
+  fonts: {
+    families: [
+      { name: 'Instrument Sans', provider: 'google', weights: [400, 500, 600], styles: ['normal', 'italic'] },
+      { name: 'Lobster Two', provider: 'google', weights: [700], styles: ['italic'] }
+    ]
   }
 })

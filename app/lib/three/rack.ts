@@ -5,10 +5,11 @@ import { GARMENT_SPECS } from './garment'
 import { createRail } from './hardware'
 import { createStage, fitDistance, prefersReducedMotion, type Stage } from './stage'
 
-const SPACING = 0.46
+/** Average gap between hooks; real racks are uneven, so each gap varies. */
+const SPACING = 0.44
 const ROD_Y = 0.62
 /** Pieces hang side-on along the rail, like a real shop rack. */
-const REST_TURN = 1.25
+const REST_TURN = 1.38
 /** 9.81 m/s² in garment units (1 unit ≈ 0.74 m). */
 const GRAVITY = 13.2
 /** How far a hook rises to clear the rail when a piece is taken off. */
@@ -16,7 +17,11 @@ const LIFT = 0.08
 /** How far towards the viewer a piece is held while it is carried. */
 const CARRY_Z = 0.17
 /** A presented piece is held out a little, bottom tipped towards the viewer. */
-const PRESENT_TILT = -0.08
+const PRESENT_TILT = -0.07
+/** Half-thickness of a hanging garment plus its hanger, along the rail when side-on. */
+const SIDE_HALF = 0.055
+/** Air between garments that touch. */
+const CLEARANCE = 0.012
 /** Hold time before a touch press picks a piece up instead of panning. */
 const LONG_PRESS_MS = 320
 const DRAG_THRESHOLD = 6
@@ -27,9 +32,12 @@ type Mode = 'rail' | 'carried' | 'returning'
 interface RackItem {
   product: Product
   garment: HangingGarment
-  slot: number
   mode: Mode
-  /** Where the hook meets the rail (or the hand), and its velocity. */
+  /** Where this piece rests on the rail when nothing is pushing it. */
+  restX: number
+  /** Where it should be right now, after making room for its neighbours. */
+  railX: number
+  /** Where the hook is (on the rail or in the hand), and how it is moving. */
   hook: THREE.Vector3
   velocity: THREE.Vector3
   acceleration: THREE.Vector3
@@ -45,8 +53,6 @@ interface RackItem {
   phase: number
   /** 0 = side-on on the rail, 1 = turned to face the viewer. */
   open: number
-  /** How far neighbours slide aside when this piece faces the viewer. */
-  push: number
   /** Distance from hook to the garment's centre of mass, and its full length. */
   pendulum: number
   length: number
@@ -94,8 +100,8 @@ const qYaw = new THREE.Quaternion()
 export class RackController {
   private stage: Stage
   private items: RackItem[] = []
-  private order: number[] = []
   private rail: THREE.Group
+  private railHalf: number
   private raycaster = new THREE.Raycaster()
   private pointer = new THREE.Vector2()
   private hit = new THREE.Vector3()
@@ -105,9 +111,14 @@ export class RackController {
   private keyboardIndex: number | null = null
   private hovered: number | null = null
   private pointerInside = false
+  private brushPoint = new THREE.Vector3()
+  private brushVelocity = new THREE.Vector3()
+  private brushTime = 0
+  private hasBrush = false
 
   private press: Press | null = null
   private carry: { index: number, offset: number, x: number } | null = null
+  private order: number[] = []
 
   private pan = 0
   private panVelocity = 0
@@ -121,31 +132,34 @@ export class RackController {
   private time = 0
   private paused = false
   private reducedMotion: boolean
-  private span: number
-  private railLength: number
 
   constructor(private container: HTMLElement, private options: RackOptions) {
     this.reducedMotion = prefersReducedMotion()
-    const count = options.products.length
-    this.span = (count - 1) * SPACING
-    this.railLength = this.span + 0.9
+
+    // Uneven, natural spacing, centred on the rail.
+    const gaps = options.products.map((_, i) => (i ? SPACING * (0.8 + 0.4 * seeded(i + 7)) : 0))
+    const xs = gaps.map((_, i) => gaps.slice(0, i + 1).reduce((a, b) => a + b, 0))
+    const span = xs[xs.length - 1] ?? 0
+    this.railHalf = span / 2 + 0.45
 
     this.stage = createStage(container, stage => this.frame3D(stage), { fov: 24 })
     const { scene } = this.stage
 
-    this.rail = createRail(this.railLength)
+    this.rail = createRail(this.railHalf * 2)
     this.rail.position.y = ROD_Y
     scene.add(this.rail)
 
     options.products.forEach((product, i) => {
       const spec = GARMENT_SPECS[product.garment]
+      const x = xs[i]! - span / 2
       const garment = new HangingGarment(product, options.resolveUrl, scene)
       const item: RackItem = {
         product,
         garment,
-        slot: i,
         mode: 'rail',
-        hook: new THREE.Vector3(this.slotX(i), ROD_Y, 0),
+        restX: x,
+        railX: x,
+        hook: new THREE.Vector3(x, ROD_Y, 0),
         velocity: new THREE.Vector3(),
         acceleration: new THREE.Vector3(),
         yaw: REST_TURN,
@@ -154,10 +168,9 @@ export class RackController {
         swingXVelocity: 0,
         swingZ: 0,
         swingZVelocity: 0,
-        rest: REST_TURN + (seeded(i) - 0.5) * 0.12,
+        rest: REST_TURN + (seeded(i) - 0.5) * 0.14,
         phase: seeded(i + 40) * Math.PI * 2,
         open: 0,
-        push: (spec.width - SPACING) / 2 + 0.05,
         pendulum: spec.drop + spec.height * 0.45,
         length: spec.drop + spec.height
       }
@@ -165,16 +178,17 @@ export class RackController {
       this.pose(item)
       scene.add(garment.hanger)
       this.items.push(item)
-      this.order.push(i)
     })
+    this.order = this.railOrder()
 
     this.frame3D(this.stage)
     this.bind()
     this.start()
   }
 
-  private slotX(slot: number) {
-    return -this.span / 2 + slot * SPACING
+  /** Product indices sorted along the rail. */
+  private railOrder() {
+    return this.items.map((_, i) => i).sort((a, b) => this.items[a]!.restX - this.items[b]!.restX)
   }
 
   /** Fit the whole rail on wide screens; on narrow screens zoom in and allow panning. */
@@ -184,9 +198,9 @@ export class RackController {
     const bottom = ROD_Y - (GARMENT_SPECS.longsleeve.drop + GARMENT_SPECS.longsleeve.height) - 0.06
     const fitH = (top - bottom) * 1.12
     this.centerY = (top + bottom) / 2
-    const fullW = this.railLength + 0.35
+    const fullW = this.railHalf * 2 + 0.35
     const aspect = camera.aspect
-    const targetW = aspect >= 1.25 ? fullW : THREE.MathUtils.clamp(aspect * fitH * 1.3, 2.3, fullW)
+    const targetW = aspect >= 1.25 ? fullW : THREE.MathUtils.clamp(aspect * fitH * 1.25, 1.8, fullW)
     this.distance = fitDistance(camera, targetW, fitH)
     const visibleW = 2 * this.distance * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * aspect
     this.panLimit = Math.max(0, (fullW - visibleW) / 2)
@@ -230,6 +244,12 @@ export class RackController {
     return this.raycaster.ray.intersectPlane(new THREE.Plane(axisZ, -depth), this.hit)
   }
 
+  /** Half the room a piece takes up along the rail at its current turn. */
+  private extent(item: RackItem, yaw = item.yaw) {
+    const spec = item.garment.spec ?? GARMENT_SPECS[item.product.garment]
+    return (spec.width / 2) * 0.9 * Math.abs(Math.cos(yaw)) + SIDE_HALF * Math.abs(Math.sin(yaw)) + CLEARANCE
+  }
+
   private pick(clientX: number, clientY: number): number | null {
     const point = this.worldAt(clientX, clientY)
     if (!point) return null
@@ -237,11 +257,13 @@ export class RackController {
     let best: number | null = null
     let bestScore = Infinity
     this.items.forEach((item, i) => {
-      const reach = SPACING / 2 + item.push * item.open
+      if (item.mode === 'carried') return
+      // The nearest piece answers, even between hangers.
+      const reach = Math.max(this.extent(item), 0.24)
       const dx = Math.abs(x - item.hook.x)
       if (dx > reach) return
       if (y > item.hook.y + 0.06 || y < item.hook.y - item.length - 0.04) return
-      const score = dx - item.push * item.open
+      const score = dx - reach
       if (score < bestScore) {
         bestScore = score
         best = i
@@ -289,9 +311,39 @@ export class RackController {
       }
     }
     if (e.pointerType === 'mouse' && !this.carry) {
+      this.brush(e.clientX, e.clientY)
       this.pointerIndex = this.pick(e.clientX, e.clientY)
       this.updateHover()
     }
+  }
+
+  /** Running the cursor through the rail brushes the fabric, like a hand would. */
+  private brush(clientX: number, clientY: number) {
+    const point = this.worldAt(clientX, clientY)
+    const now = performance.now()
+    if (!point) {
+      this.hasBrush = false
+      return
+    }
+    const dt = (now - this.brushTime) / 1000
+    if (this.hasBrush && dt > 0 && dt < 0.1) {
+      this.brushVelocity.subVectors(point, this.brushPoint).divideScalar(dt)
+      this.brushVelocity.z = 0
+      const speed = this.brushVelocity.length()
+      if (speed > 0.2) {
+        this.brushVelocity.multiplyScalar(Math.min(1, 2.5 / speed))
+        for (const item of this.items) {
+          if (item.mode !== 'rail') continue
+          if (Math.abs(point.x - item.hook.x) > this.extent(item) + 0.08) continue
+          if (point.y > item.hook.y || point.y < item.hook.y - item.length) continue
+          item.garment.brush(point, this.brushVelocity)
+          item.swingZVelocity -= this.brushVelocity.x * 0.04
+        }
+      }
+    }
+    this.brushPoint.copy(point)
+    this.brushTime = now
+    this.hasBrush = true
   }
 
   private onPointerUp = (e: PointerEvent) => {
@@ -322,6 +374,7 @@ export class RackController {
 
   private onPointerLeave = (e: PointerEvent) => {
     this.pointerInside = false
+    this.hasBrush = false
     if (e.pointerType === 'mouse' && !this.carry) this.clearPointer()
   }
 
@@ -346,27 +399,62 @@ export class RackController {
     const carry = this.carry
     const point = this.worldAt(clientX, clientY, CARRY_Z)
     if (!carry || !point) return
-    const limit = this.span / 2 + 0.25
-    carry.x = THREE.MathUtils.clamp(point.x + carry.offset, -limit, limit)
-    const slot = THREE.MathUtils.clamp(Math.round((carry.x + this.span / 2) / SPACING), 0, this.items.length - 1)
-    const item = this.items[carry.index]!
-    if (slot !== item.slot) {
-      this.order.splice(item.slot, 1)
-      this.order.splice(slot, 0, carry.index)
-      this.order.forEach((itemIndex, s) => {
-        this.items[itemIndex]!.slot = s
-      })
-    }
+    carry.x = THREE.MathUtils.clamp(point.x + carry.offset, -this.railHalf + 0.15, this.railHalf - 0.15)
     // Keep panned views following the piece near the edges.
     if (this.panLimit > 0) this.panTarget = THREE.MathUtils.clamp(carry.x * 0.6, -this.panLimit, this.panLimit)
   }
 
+  /** Hang the piece where it was let go; neighbours shuffle along just enough. */
   private endCarry() {
     const carry = this.carry
     if (!carry) return
-    this.items[carry.index]!.mode = 'returning'
+    const item = this.items[carry.index]!
+    item.mode = 'returning'
+    item.restX = carry.x
     this.carry = null
-    this.options.onReorder?.([...this.order])
+    this.settle(carry.index)
+    const order = this.railOrder()
+    if (order.some((v, i) => v !== this.order[i])) {
+      this.order = order
+      this.options.onReorder?.([...order])
+    }
+  }
+
+  /**
+   * Resolves overlaps along the rail. Pieces only move when something actually
+   * bumps into them; `fixed` pieces hold their place and push the others.
+   */
+  private solveRail(positions: number[], extents: number[], fixed: boolean[], members: number[]) {
+    const sorted = [...members].sort((a, b) => positions[a]! - positions[b]!)
+    for (let it = 0; it < 8; it++) {
+      for (let k = 1; k < sorted.length; k++) {
+        const a = sorted[k - 1]!
+        const b = sorted[k]!
+        const overlap = extents[a]! + extents[b]! - (positions[b]! - positions[a]!)
+        if (overlap <= 0) continue
+        const wa = fixed[a] ? 0 : 1
+        const wb = fixed[b] ? 0 : 1
+        const w = wa + wb || 2
+        positions[a] = positions[a]! - overlap * (wa || (wb ? 0 : 1)) / w
+        positions[b] = positions[b]! + overlap * (wb || (wa ? 0 : 1)) / w
+      }
+      for (const i of sorted) {
+        const limit = this.railHalf - extents[i]! - 0.02
+        positions[i] = THREE.MathUtils.clamp(positions[i]!, -limit, limit)
+      }
+    }
+  }
+
+  /** Makes a newly hung piece's room permanent: pushed neighbours stay put. */
+  private settle(fixedIndex: number) {
+    const members = this.items.map((item, i) => (item.mode === 'carried' ? -1 : i)).filter(i => i >= 0)
+    const positions = this.items.map(item => item.restX)
+    const extents = this.items.map(item => this.extent(item, item.rest))
+    const fixed = this.items.map((_, i) => i === fixedIndex)
+    this.solveRail(positions, extents, fixed, members)
+    members.forEach((i) => {
+      this.items[i]!.restX = positions[i]!
+    })
   }
 
   /* ------------------------------------------------------------- hovering */
@@ -385,7 +473,7 @@ export class RackController {
     this.keyboardIndex = index
     if (index !== null) {
       const item = this.items[index]
-      if (item) this.panTarget = THREE.MathUtils.clamp(this.slotX(item.slot), -this.panLimit, this.panLimit)
+      if (item) this.panTarget = THREE.MathUtils.clamp(item.restX, -this.panLimit, this.panLimit)
     }
     this.updateHover()
   }
@@ -418,6 +506,17 @@ export class RackController {
   }
 
   private update(dt: number) {
+    // Where everything on the rail should be right now: at rest, except where a
+    // turned or newly hung piece needs the room.
+    const members = this.items.map((item, i) => (item.mode === 'carried' ? -1 : i)).filter(i => i >= 0)
+    const positions = this.items.map(item => item.restX)
+    const extents = this.items.map(item => this.extent(item))
+    const fixed = this.items.map((item, i) => i === this.hovered || item.mode === 'returning')
+    this.solveRail(positions, extents, fixed, members)
+    this.items.forEach((item, i) => {
+      item.railX = positions[i]!
+    })
+
     const steps = Math.max(1, Math.ceil(dt / SUBSTEP))
     const h = dt / steps
     for (let s = 0; s < steps; s++) {
@@ -426,9 +525,8 @@ export class RackController {
     }
     for (const item of this.items) {
       this.pose(item)
-      // A piece held up to look at firms up; one being carried dangles freely.
-      const rigidity = item.mode === 'carried' ? 0.1 : 0.4 * item.open
-      item.garment.update(dt, rigidity, this.reducedMotion ? 0 : 1)
+      // A piece held up to look at firms up a touch; one being carried dangles freely.
+      item.garment.update(dt, item.mode === 'carried' ? 0 : 0.15 * item.open)
       if (item.garment.spec) {
         item.length = item.garment.spec.drop + item.garment.spec.height
         item.pendulum = item.garment.spec.drop + item.garment.spec.height * 0.45
@@ -447,20 +545,18 @@ export class RackController {
     const view = Math.atan2(this.pan - item.hook.x, this.distance)
 
     // Where the hook wants to be.
-    let tx = this.slotX(item.slot)
-    for (const other of this.items) {
-      if (other !== item) tx += Math.sign(item.slot - other.slot) * other.push * other.open
-    }
+    let tx = item.railX
     let ty = ROD_Y
     let tz = 0
-    let k = 70
+    // Hangers slide promptly when bumped, gently when settling back.
+    let k = Math.abs(tx - item.restX) > 0.002 ? 150 : 60
     if (item.mode === 'carried' && this.carry) {
       tx = this.carry.x
       ty = ROD_Y + LIFT
       tz = CARRY_Z
       k = 260
     } else if (item.mode === 'returning') {
-      // Move over the slot first, then lower the hook back onto the rail.
+      // Move over the spot first, then lower the hook back onto the rail.
       const away = Math.max(Math.abs(item.hook.x - tx), item.hook.z)
       ty = ROD_Y + LIFT * THREE.MathUtils.smoothstep(away, 0.012, 0.07)
       k = 110
@@ -477,7 +573,7 @@ export class RackController {
 
     // Turning the hanger to face the viewer, like a hand would.
     const yawTarget = presented || item.mode !== 'rail' ? 0 : item.rest + view
-    item.yawVelocity += spring(item.yaw, item.yawVelocity, yawTarget, 60, 0.95) * h
+    item.yawVelocity += spring(item.yaw, item.yawVelocity, yawTarget, 32, 0.92) * h
     item.yaw += item.yawVelocity * h
     item.open = THREE.MathUtils.clamp(1 - item.yaw / (item.rest + view), 0, 1)
 
@@ -490,14 +586,14 @@ export class RackController {
     const breeze = idle * (Math.sin(t * 0.31 + item.phase) + 0.6 * Math.sin(t * 0.73 + item.phase * 2.1))
     const tilt = presented && onRail ? PRESENT_TILT * item.open : 0
     // About the rail: the hook rolls freely on the rod.
-    const dampX = 2 * 0.16 * Math.sqrt(w2)
+    const dampX = 2 * 0.14 * Math.sqrt(w2)
     const accX = -w2 * (Math.sin(item.swingX) - Math.sin(tilt)) - dampX * item.swingXVelocity
-      + (a.z / L) * Math.cos(item.swingX) + 0.08 * breeze
+      + (a.z / L) * Math.cos(item.swingX) + 0.06 * breeze
     // Along the rail: on the rod the hook resists rocking; in the hand it swings freely.
     const stiffZ = onRail ? 2.2 : 1
-    const dampZ = 2 * (onRail ? 0.3 : 0.12) * Math.sqrt(w2 * stiffZ)
+    const dampZ = 2 * (onRail ? 0.25 : 0.1) * Math.sqrt(w2 * stiffZ)
     const accZ = -w2 * stiffZ * Math.sin(item.swingZ) - dampZ * item.swingZVelocity
-      - (a.x / L) * Math.cos(item.swingZ) + 0.05 * breeze
+      - (a.x / L) * Math.cos(item.swingZ) + 0.04 * breeze
     item.swingXVelocity += accX * h
     item.swingX += item.swingXVelocity * h
     item.swingZVelocity += accZ * h
