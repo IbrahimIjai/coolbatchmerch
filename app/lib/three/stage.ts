@@ -24,7 +24,8 @@ export function createStage(container: HTMLElement, onResize: (stage: Stage) => 
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.setClearColor(0x000000, 0)
   renderer.toneMapping = THREE.NeutralToneMapping
-  renderer.toneMappingExposure = 1.02
+  // Exposed for white cotton: whites stay off the clip so folds keep their shading.
+  renderer.toneMappingExposure = 0.86
   renderer.shadowMap.enabled = options.shadows ?? true
   renderer.shadowMap.type = THREE.PCFShadowMap
   renderer.domElement.style.display = 'block'
@@ -39,13 +40,14 @@ export function createStage(container: HTMLElement, onResize: (stage: Stage) => 
   room.dispose()
   pmrem.dispose()
   scene.environment = envMap
-  scene.environmentIntensity = 0.55
+  scene.environmentIntensity = 0.25
 
   const camera = new THREE.PerspectiveCamera(options.fov ?? 28, 1, 0.1, 80)
 
-  scene.add(new THREE.HemisphereLight('#ffffff', '#d9d1c3', 0.55))
-  const key = new THREE.DirectionalLight('#fff4e6', 1.75)
-  key.position.set(-1.4, 2.4, 6)
+  scene.add(new THREE.HemisphereLight('#ffffff', '#d9d1c3', 0.3))
+  // Key light from the upper left at a raking angle, so folds catch light and shadow.
+  const key = new THREE.DirectionalLight('#fff4e6', 2.3)
+  key.position.set(-3.6, 3, 4.2)
   key.castShadow = true
   key.shadow.mapSize.set(2048, 2048)
   key.shadow.camera.left = -3.6
@@ -62,7 +64,7 @@ export function createStage(container: HTMLElement, onResize: (stage: Stage) => 
   rim.position.set(3, 1.5, -2)
   scene.add(rim)
 
-  const wall = new THREE.Mesh(new THREE.PlaneGeometry(16, 8), new THREE.ShadowMaterial({ opacity: 0.05 }))
+  const wall = new THREE.Mesh(new THREE.PlaneGeometry(16, 8), new THREE.ShadowMaterial({ opacity: 0.035 }))
   wall.position.z = -0.9
   wall.receiveShadow = true
   scene.add(wall)

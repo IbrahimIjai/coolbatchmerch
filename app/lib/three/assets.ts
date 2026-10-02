@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { Product } from '~/data/products'
 import { ClothSim } from './cloth'
-import { loadGarmentModel, paintGarment, type GarmentModel, type GarmentSpec } from './garment'
+import { foldField, getFabricNormalMap, loadGarmentModel, paintGarment, type GarmentSpec } from './garment'
 import { createHanger } from './hardware'
 
 export type ResolveUrl = (path: string) => string
@@ -10,8 +10,10 @@ export interface GarmentAsset {
   spec: GarmentSpec
   geometry: THREE.BufferGeometry
   insideAt: (x: number, y: number) => boolean
-  /** Front, back and (for layered pieces) under-layer materials. */
-  materials: THREE.MeshStandardMaterial[]
+  /** The fabric's natural hanging folds (offset of its middle surface). */
+  foldAt: (x: number, y: number) => number
+  /** Front and back materials. */
+  materials: THREE.MeshPhysicalMaterial[]
 }
 
 /*
@@ -20,18 +22,29 @@ export interface GarmentAsset {
  */
 const cache = new Map<string, Promise<GarmentAsset>>()
 
-function fabric(model: GarmentModel, map: THREE.Texture | null, color?: string) {
-  const material = new THREE.MeshStandardMaterial({
+/**
+ * Cotton jersey: fully rough, with a soft sheen that lights up where the
+ * fabric turns away from you (the dusty edge real T-shirts have), and a fine
+ * knit texture. Shape and folds come from the geometry, not from the material.
+ */
+function fabric(spec: GarmentSpec, map: THREE.Texture, fabricColor: string) {
+  const knit = getFabricNormalMap().clone()
+  knit.repeat.set(26, 26 * spec.height / spec.width)
+  const sheen = new THREE.Color(fabricColor).lerp(new THREE.Color('#ffffff'), 0.65).multiplyScalar(0.55)
+  const material = new THREE.MeshPhysicalMaterial({
     map,
-    color: color ?? '#ffffff',
-    roughness: 0.92,
+    roughness: 0.94,
     metalness: 0,
+    sheen: 1,
+    sheenRoughness: 0.45,
+    sheenColor: sheen,
+    normalMap: knit,
+    normalScale: new THREE.Vector2(0.35, 0.35),
     side: THREE.DoubleSide
   })
-  if (model.normalMap) {
-    material.normalMap = model.normalMap
-    material.normalScale.copy(model.normalScale)
-  }
+  // Prints don't show through: the inside of the garment is plain fabric.
+  // (Stored as a string — material.clone() copies userData through JSON.)
+  material.userData.inside = fabricColor
   return material
 }
 
@@ -43,16 +56,14 @@ function canvasTexture(canvas: HTMLCanvasElement) {
 }
 
 export function loadGarment(product: Product, resolveUrl: ResolveUrl) {
-  const key = [product.id, product.garment, product.color, product.under, product.image, product.placement, product.sleeve].join('|')
+  const key = [product.id, product.garment, product.color, product.image, product.placement].join('|')
   let pending = cache.get(key)
   if (!pending) {
     pending = loadGarmentModel(product.garment, resolveUrl).then(async (model) => {
-      // The model's normal map follows the model's own UVs (second uv set).
-      if (model.normalMap) model.normalMap.channel = 1
+      const { spec } = model
       const { front, back } = await paintGarment(product, model, resolveUrl(product.image))
-      const materials = [fabric(model, canvasTexture(front)), fabric(model, canvasTexture(back))]
-      if (model.layered) materials.push(fabric(model, null, product.under ?? '#f5f4f0'))
-      return { spec: model.spec, geometry: model.geometry, insideAt: model.insideAt, materials }
+      const materials = [fabric(spec, canvasTexture(front), product.color), fabric(spec, canvasTexture(back), product.color)]
+      return { spec, geometry: model.geometry, insideAt: model.insideAt, foldAt: foldField(product.id, spec), materials }
     })
     cache.set(key, pending)
   }

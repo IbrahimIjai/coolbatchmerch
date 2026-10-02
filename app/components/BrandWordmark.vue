@@ -18,3 +18,11 @@ import { site } from '~/data/site'
     <span class="pl-[0.85em]">{{ site.brand.lines[1] }}</span>
   </NuxtLink>
 </template>
+
+<style scoped>
+/* Script lettering: let the typeface's joins and ligatures connect. */
+a {
+  font-feature-settings: 'liga' 1, 'calt' 1;
+  font-kerning: normal;
+}
+</style>

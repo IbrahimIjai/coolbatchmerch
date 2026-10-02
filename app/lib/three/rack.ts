@@ -195,7 +195,7 @@ export class RackController {
   private frame3D(stage: Stage) {
     const { camera } = stage
     const top = ROD_Y + 0.12
-    const bottom = ROD_Y - (GARMENT_SPECS.longsleeve.drop + GARMENT_SPECS.longsleeve.height) - 0.06
+    const bottom = ROD_Y - (GARMENT_SPECS.tee.drop + GARMENT_SPECS.tee.height) - 0.06
     const fitH = (top - bottom) * 1.12
     this.centerY = (top + bottom) / 2
     const fullW = this.railHalf * 2 + 0.35

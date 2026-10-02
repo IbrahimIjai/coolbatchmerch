@@ -2,18 +2,16 @@
  * The collection on the rack. Edit, reorder or swap designs here — everything
  * else (rack, overlay, labels, counter) is driven by this array.
  *
- * - `garment`   picks the 3D garment: 'tee' | 'longsleeve' | 'layered' (a tee over long sleeves).
- * - `color`     is the fabric colour (the outer tee for layered pieces).
- * - `under`     is the long-sleeve colour under a layered piece.
+ * - `garment`   picks the 3D garment model (currently 'tee').
+ * - `color`     is the fabric colour.
  * - `image`     is the print artwork: a transparent PNG/SVG in /public.
  * - `placement` decides where the artwork is printed:
  *     'chest'  — centred front print
  *     'pocket' — small mark on the wearer's left chest
  *     'full'   — all-over print covering the whole garment
- * - `sleeve`    optional text printed down the left sleeve (long sleeves).
  * - `url`       optional product page; otherwise "See availability" emails the studio.
  */
-export type GarmentKind = 'tee' | 'longsleeve' | 'layered'
+export type GarmentKind = 'tee'
 export type PrintPlacement = 'chest' | 'pocket' | 'full'
 
 export interface Product {
@@ -24,8 +22,6 @@ export interface Product {
   color: string
   image: string
   placement: PrintPlacement
-  under?: string
-  sleeve?: string
   url?: string
 }
 
@@ -61,34 +57,31 @@ export const products: Product[] = [
     placement: 'chest'
   },
   {
-    id: 'eko-long-sleeve',
-    name: 'Èkó Skyline Long Sleeve',
+    id: 'eko-skyline-tee',
+    name: 'Èkó Skyline Tee',
     label: 'Black',
-    garment: 'longsleeve',
+    garment: 'tee',
     color: BLACK,
     image: '/merch/eko-skyline.png',
-    placement: 'chest',
-    sleeve: 'Lagos · Èkó'
+    placement: 'chest'
   },
   {
-    id: 'naija-layered-tee',
-    name: 'Naija Layered Tee',
-    label: 'Green / White',
-    garment: 'layered',
+    id: 'naija-threads-tee-green',
+    name: 'Naija Threads Tee',
+    label: 'Green',
+    garment: 'tee',
     color: '#0f6b41',
-    under: WHITE,
     image: '/merch/script-mark-cream.png',
     placement: 'pocket'
   },
   {
-    id: 'sixty-six-long-sleeve',
-    name: 'Sixty-Six Long Sleeve',
+    id: 'sixty-six-tee',
+    name: 'Sixty-Six Tee',
     label: 'Black',
-    garment: 'longsleeve',
+    garment: 'tee',
     color: '#161618',
     image: '/merch/sixty-six.png',
-    placement: 'chest',
-    sleeve: 'Nigeria @ 66'
+    placement: 'chest'
   },
   {
     id: 'confluence-tee',
@@ -109,18 +102,17 @@ export const products: Product[] = [
     placement: 'chest'
   },
   {
-    id: 'naija-since-1960-long-sleeve',
-    name: 'Naija Since 1960 Long Sleeve',
+    id: 'naija-since-1960-tee',
+    name: 'Naija Since 1960 Tee',
     label: 'Forest',
-    garment: 'longsleeve',
+    garment: 'tee',
     color: '#1e4d36',
     image: '/merch/naija-crewneck.png',
-    placement: 'chest',
-    sleeve: 'One Nigeria'
+    placement: 'chest'
   },
   {
-    id: 'since-1960-tee',
-    name: 'Since 1960 Tee',
+    id: 'since-1960-pocket-tee',
+    name: 'Since 1960 Pocket Tee',
     label: 'Heather Grey',
     garment: 'tee',
     color: '#8d8f93',

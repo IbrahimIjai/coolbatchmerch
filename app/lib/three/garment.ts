@@ -11,11 +11,13 @@ import { hangerTopAt } from './hardware'
  * y = 0 at the top of the collar, hanging into negative y, z out of the front —
  * then:
  *   1. widen the torso so its circumference lies flat (as a shirt does on a hanger),
- *   2. flatten the depth to a few centimetres, fuller across the shoulders,
+ *   2. press the front and back together into two thin layers of fabric, held a
+ *      little apart across the shoulders by the hanger,
  *   3. swing the sleeves down from the shoulders,
  *   4. fit the shoulders just over our wooden hanger.
- * Our fabric colour and prints are projected onto the front and back, while
- * the model's own normal map keeps its stitching and wrinkles.
+ * Our fabric colour and prints are projected onto the front and back. The
+ * models' own wrinkle maps are not used: they describe a shirt worn on a body.
+ * Folds come from the cloth simulation instead (see `foldAt` and cloth.ts).
  */
 
 export interface GarmentSpec {
@@ -31,18 +33,12 @@ export interface GarmentSpec {
 
 interface ModelSource {
   path: string
-  /** Keep only the largest connected piece, or everything. */
-  keep: 'largest' | 'all'
-  /** Pieces other than the largest form an outer layer worn over it. */
-  layered?: boolean
   /** Extra downward swing for the sleeves, radians. */
   sleeveDrop: number
 }
 
 const SOURCES: Record<GarmentKind, ModelSource> = {
-  tee: { path: 'models/basic-tee/basic_t-shirt.glb', keep: 'all', sleeveDrop: 0.12 },
-  longsleeve: { path: 'models/layered-tee/scene.gltf', keep: 'largest', sleeveDrop: 0.42 },
-  layered: { path: 'models/layered-tee/scene.gltf', keep: 'all', layered: true, sleeveDrop: 0.42 }
+  tee: { path: 'models/basic-tee/basic_t-shirt.glb', sleeveDrop: 0.12 }
 }
 
 /** Half-width of every torso once laid flat, in garment units. */
@@ -52,19 +48,14 @@ const FLATTEN_X = 1.45
 
 /** Layout sizes used before the models have loaded (rack spacing, framing). */
 export const GARMENT_SPECS: Record<GarmentKind, GarmentSpec> = {
-  tee: { width: 1.06, height: 1.02, drop: 0.168, body: TORSO, shoulder: 0.33 },
-  longsleeve: { width: 1.12, height: 1.08, drop: 0.16, body: TORSO, shoulder: 0.33 },
-  layered: { width: 1.12, height: 1.08, drop: 0.16, body: TORSO, shoulder: 0.33 }
+  tee: { width: 1.06, height: 1.02, drop: 0.168, body: TORSO, shoulder: 0.33 }
 }
 
 /* ---------------------------------------------------------------- loading */
 
 interface RawModel {
   positions: Float32Array
-  uvs: Float32Array
   indices: Uint32Array
-  normalMap: THREE.Texture | null
-  normalScale: THREE.Vector2
 }
 
 const rawCache = new Map<string, Promise<RawModel>>()
@@ -75,43 +66,24 @@ function loadRaw(url: string) {
     pending = new GLTFLoader().loadAsync(url).then((gltf) => {
       gltf.scene.updateMatrixWorld(true)
       const positions: number[] = []
-      const uvs: number[] = []
       const indices: number[] = []
-      let normalMap: THREE.Texture | null = null
-      const normalScale = new THREE.Vector2(1, 1)
       gltf.scene.traverse((object) => {
         const mesh = object as THREE.Mesh
         if (!mesh.isMesh) return
         const g = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld)
         const base = positions.length / 3
         const pos = g.getAttribute('position')
-        const uv = g.getAttribute('uv')
-        for (let i = 0; i < pos.count; i++) {
-          positions.push(pos.getX(i), pos.getY(i), pos.getZ(i))
-          uvs.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0)
-        }
+        for (let i = 0; i < pos.count; i++) positions.push(pos.getX(i), pos.getY(i), pos.getZ(i))
         const index = g.getIndex()
         if (index) for (let i = 0; i < index.count; i++) indices.push(base + index.getX(i))
         else for (let i = 0; i < pos.count; i++) indices.push(base + i)
         g.dispose()
+        // Only the shape is used; release the model's own textures.
         const material = mesh.material as THREE.MeshStandardMaterial
-        if (!normalMap && material.normalMap) {
-          normalMap = material.normalMap
-          normalScale.copy(material.normalScale)
-        }
-        // Only the normal map is used; release the rest.
-        for (const key of ['map', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap'] as const) {
-          const t = material[key]
-          if (t && t !== normalMap) t.dispose()
-        }
+        for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap'] as const) material[key]?.dispose()
+        material.dispose()
       })
-      return {
-        positions: Float32Array.from(positions),
-        uvs: Float32Array.from(uvs),
-        indices: Uint32Array.from(indices),
-        normalMap,
-        normalScale
-      }
+      return { positions: Float32Array.from(positions), indices: Uint32Array.from(indices) }
     })
     rawCache.set(url, pending)
   }
@@ -134,28 +106,6 @@ function weld(positions: Float32Array) {
     ids[i] = id
   }
   return ids
-}
-
-/** Connected piece of each vertex, and the id of the largest piece. */
-function pieces(ids: Int32Array, indices: Uint32Array) {
-  const parent = Int32Array.from({ length: ids.length }, (_, i) => i)
-  const find = (x: number): number => {
-    while (parent[x] !== x) {
-      parent[x] = parent[parent[x]!]!
-      x = parent[x]!
-    }
-    return x
-  }
-  for (let t = 0; t < indices.length; t += 3) {
-    const a = find(ids[indices[t]!]!)
-    parent[find(ids[indices[t + 1]!]!)] = a
-    parent[find(ids[indices[t + 2]!]!)] = a
-  }
-  const piece = Int32Array.from({ length: ids.length }, (_, i) => find(ids[i]!))
-  const size = new Map<number, number>()
-  for (let t = 0; t < indices.length; t += 3) size.set(piece[indices[t]!]!, (size.get(piece[indices[t]!]!) ?? 0) + 1)
-  const largest = [...size.entries()].sort((a, b) => b[1] - a[1])[0]![0]
-  return { piece, largest }
 }
 
 /** Open borders (neck, hem, cuffs) as loops of vertex indices. */
@@ -209,17 +159,11 @@ export interface GarmentAnchors {
   neckFront: number
   /** Highest point of the back neckline. */
   neckBack: number
-  /** Wearer's left sleeve (viewer's right): shoulder → cuff, for sleeve prints. */
-  sleeve: [THREE.Vector2, THREE.Vector2] | null
 }
 
 export interface GarmentModel {
   spec: GarmentSpec
   geometry: THREE.BufferGeometry
-  /** Separate under-layer group (layered garments). */
-  layered: boolean
-  normalMap: THREE.Texture | null
-  normalScale: THREE.Vector2
   anchors: GarmentAnchors
   insideAt: (x: number, y: number) => boolean
   /** Flat silhouette, for 2D previews. */
@@ -241,36 +185,10 @@ export function loadGarmentModel(kind: GarmentKind, resolveUrl: (path: string) =
 }
 
 function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
-  // 1. Pick the pieces we want and compact them.
-  const allIds = weld(raw.positions)
-  const { piece, largest } = pieces(allIds, raw.indices)
-  const keepTri: number[] = []
-  for (let t = 0; t < raw.indices.length; t += 3) {
-    if (source.keep === 'all' || piece[raw.indices[t]!] === largest) keepTri.push(t)
-  }
-  const remap = new Int32Array(raw.positions.length / 3).fill(-1)
-  const src: number[] = []
-  const indices: number[] = []
-  for (const t of keepTri) {
-    for (let k = 0; k < 3; k++) {
-      const v = raw.indices[t + k]!
-      if (remap[v]! < 0) {
-        remap[v] = src.length
-        src.push(v)
-      }
-      indices.push(remap[v]!)
-    }
-  }
-  const n = src.length
-  const P = new Float32Array(n * 3)
-  const uv1 = new Float32Array(n * 2)
-  const under = new Uint8Array(n)
-  src.forEach((v, i) => {
-    P.set(raw.positions.subarray(v * 3, v * 3 + 3), i * 3)
-    uv1.set(raw.uvs.subarray(v * 2, v * 2 + 2), i * 2)
-    under[i] = source.layered && piece[v] === largest ? 1 : 0
-  })
-  const index = Uint32Array.from(indices)
+  // 1. The model's surface, and its open borders (neck, hem, cuffs).
+  const P = raw.positions.slice()
+  const n = P.length / 3
+  const index = raw.indices.slice()
   const ids = weld(P)
   const loops = borderLoops(ids, index)
 
@@ -285,11 +203,11 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
       minX = Math.min(minX, P[i * 3]!)
       maxX = Math.max(maxX, P[i * 3]!)
     }
-    return { loop, c: centroid(loop), half: (maxX - minX) / 2, under: under[loop[0]!] === 1 }
+    return { loop, c: centroid(loop), half: (maxX - minX) / 2 }
   })
   const neck = loopInfo.reduce((a, b) => (b.c.y > a.c.y ? b : a))
-  // The hem used for sizing: the lowest centred loop of the base garment.
-  const hems = loopInfo.filter(l => Math.abs(l.c.x) < 0.1 && (!source.layered || l.under))
+  // The hem used for sizing: the lowest centred loop.
+  const hems = loopInfo.filter(l => Math.abs(l.c.x) < 0.1)
   const hem = hems.reduce((a, b) => (b.c.y < a.c.y ? b : a))
 
   // 2. Face the front towards +z: the front neckline dips lower than the back.
@@ -314,7 +232,9 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
     Z[i] = (P[i * 3 + 2]! - hem.c.z) * flip
   }
 
-  // 4. Flatten: per height, centre the torso and scale its depth to a target.
+  // 4. Press flat: per height, centre the torso and squeeze its depth so the
+  //    front and back lie close — a centimetre or two apart where the hanger
+  //    holds the shoulders open, a few millimetres lower down.
   let minY = 0
   for (let i = 0; i < n; i++) minY = Math.min(minY, Y[i]!)
   const bins = 48
@@ -342,12 +262,44 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
   const smooth = (a: Float32Array) => a.map((_, b) => (a[Math.max(0, b - 1)]! + a[b]! * 2 + a[Math.min(bins - 1, b + 1)]!) / 4)
   const centreS = smooth(centre)
   const halfS = smooth(half)
+
+  // Hems, cuffs and collars fold back inside the garment. Those turned-under
+  // allowances face inwards; once the garment is pressed thin they would sit a
+  // fraction of a millimetre behind the outside and show through it, so they
+  // are tucked further in, like a pressed hem.
+  const turned = new Uint8Array(n)
+  {
+    const acc = new Float32Array(n * 3)
+    const pa = new THREE.Vector3(), pb = new THREE.Vector3(), pc = new THREE.Vector3()
+    for (let t = 0; t < index.length; t += 3) {
+      const [a, b, c] = [index[t]!, index[t + 1]!, index[t + 2]!]
+      pa.set(X[a]!, Y[a]!, Z[a]!)
+      pb.set(X[b]!, Y[b]!, Z[b]!)
+      pc.set(X[c]!, Y[c]!, Z[c]!)
+      const f = pb.sub(pa).cross(pc.sub(pa))
+      for (const v of [a, b, c]) {
+        const w = ids[v]!
+        acc[w * 3] = acc[w * 3]! + f.x
+        acc[w * 3 + 2] = acc[w * 3 + 2]! + f.z
+      }
+    }
+    // Which way the outside faces: most of a garment's area faces outwards.
+    const facing = new Float32Array(n)
+    let outwards = 0
+    for (let i = 0; i < n; i++) {
+      const w = ids[i]!
+      const rz = Z[i]! - centreS[bin(Y[i]!)]!
+      facing[i] = acc[w * 3]! * X[i]! + acc[w * 3 + 2]! * rz
+      outwards += Math.sign(facing[i]!)
+    }
+    for (let i = 0; i < n; i++) turned[i] = facing[i]! * outwards < 0 ? 1 : 0
+  }
+
   for (let i = 0; i < n; i++) {
     const b = bin(Y[i]!)
-    const target = THREE.MathUtils.lerp(0.034, 0.02, smoothstep(0.05, 0.35, -Y[i]!))
+    const target = THREE.MathUtils.lerp(0.024, 0.006, smoothstep(0.04, 0.3, -Y[i]!))
     let z = ((Z[i]! - centreS[b]!) / halfS[b]!) * target
-    // Keep an outer layer clear of the one beneath it.
-    if (source.layered && !under[i]) z += Math.sign(z) * 0.003
+    if (turned[i]) z *= 0.35
     Z[i] = z
   }
 
@@ -419,6 +371,17 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
   const shoulderTop = (topAt(0.2) + topAt(-0.2)) / 2
   const drop = shoulderTop - hangerTopAt(0.2) - 0.012
 
+  // The hanger is inside the shoulders: both layers drape over and around it
+  // rather than through it, curving in to meet at the top edge.
+  for (let i = 0; i < n; i++) {
+    const ax = Math.abs(X[i]!)
+    if (ax > 0.37) continue
+    if (Y[i]! < hangerTopAt(X[i]!) + drop - 0.06) continue
+    const below = Math.max(0, topAt(X[i]!) - Y[i]!)
+    const floor = 0.024 * Math.sqrt(Math.min(1, below / 0.02)) * (1 - smoothstep(0.33, 0.37, ax))
+    if (Math.abs(Z[i]!) < floor) Z[i] = (Z[i]! < 0 ? -1 : 1) * floor
+  }
+
   // 7. Anchors for prints.
   let neckFront = 0
   let neckBack = -Infinity
@@ -427,14 +390,6 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
     else neckBack = Math.max(neckBack, Y[i]!)
   }
   if (!Number.isFinite(neckBack)) neckBack = 0
-  const cuffs = loopInfo
-    .filter(l => !source.layered || l.under)
-    .map(l => ({ ...l, x: l.loop.reduce((sum, i) => sum + X[i]!, 0) / l.loop.length, y: l.loop.reduce((sum, i) => sum + Y[i]!, 0) / l.loop.length }))
-    .filter(l => l.x > TORSO)
-    .sort((a, b) => b.x - a.x)
-  const sleeve: [THREE.Vector2, THREE.Vector2] | null = cuffs[0]
-    ? [new THREE.Vector2(TORSO + 0.02, pivotY), new THREE.Vector2(cuffs[0].x, cuffs[0].y)]
-    : null
 
   // 8. Normals smoothed across UV seams, after all reshaping. Faces must wind
   //    outwards (the shader shades inward-facing fabric as the inside).
@@ -450,7 +405,7 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
   for (let t = 0; t < index.length; t += 3) {
     const [a, b, c] = [index[t]!, index[t + 1]!, index[t + 2]!]
     const z = Z[a]! + Z[b]! + Z[c]!
-    if (Math.abs(X[a]!) < 0.2 && !under[a]) outward += Math.sign(z) * Math.sign(faceNormal(t).z)
+    if (Math.abs(X[a]!) < 0.2) outward += Math.sign(z) * Math.sign(faceNormal(t).z)
   }
   if (outward < 0) {
     for (let t = 0; t < index.length; t += 3) {
@@ -477,16 +432,15 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
     normals.set([v.x, v.y, v.z], i * 3)
   }
 
-  // 9. Assemble: planar uv for our prints, uv1 for the model's normal map, cloth binding.
+  // 9. Assemble: planar uv for our prints, plus the cloth binding.
   const grid = clothGrid(width, height)
   const positions: number[] = []
   const nrm: number[] = []
   const uv: number[] = []
-  const uvModel: number[] = []
   const gridCoords: number[] = []
   const shells: number[] = []
-  const groups: number[][] = [[], [], []]
-  const out = [new Int32Array(n).fill(-1), new Int32Array(n).fill(-1), new Int32Array(n).fill(-1)]
+  const groups: number[][] = [[], []]
+  const out = [new Int32Array(n).fill(-1), new Int32Array(n).fill(-1)]
   const vertex = (i: number, group: number) => {
     const map = out[group]!
     if (map[i]! >= 0) return map[i]!
@@ -495,7 +449,6 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
     nrm.push(normals[i * 3]!, normals[i * 3 + 1]!, normals[i * 3 + 2]!)
     const u = (X[i]! + width / 2) / width
     uv.push(group === 1 ? 1 - u : u, 1 + Y[i]! / height)
-    uvModel.push(uv1[i * 2]!, uv1[i * 2 + 1]!)
     gridCoords.push((X[i]! + width / 2) / grid.cell, -Y[i]! / grid.cell)
     shells.push(Z[i]!)
     map[i] = k
@@ -503,7 +456,7 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
   }
   for (let t = 0; t < index.length; t += 3) {
     const tri = [index[t]!, index[t + 1]!, index[t + 2]!]
-    const group = under[tri[0]!] ? 2 : (Z[tri[0]!]! + Z[tri[1]!]! + Z[tri[2]!]! >= 0 ? 0 : 1)
+    const group = Z[tri[0]!]! + Z[tri[1]!]! + Z[tri[2]!]! >= 0 ? 0 : 1
     groups[group]!.push(...tri.map(i => vertex(i, group)))
   }
 
@@ -511,7 +464,6 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   geometry.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3))
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
-  geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(uvModel, 2))
   geometry.setAttribute('aGrid', new THREE.Float32BufferAttribute(gridCoords, 2))
   geometry.setAttribute('aShell', new THREE.Float32BufferAttribute(shells, 1))
   geometry.setIndex(groups.flat())
@@ -525,13 +477,94 @@ function shapeGarment(raw: RawModel, source: ModelSource): GarmentModel {
   return {
     spec: { width, height, drop, body: TORSO, shoulder: 0.33 },
     geometry,
-    layered: !!source.layered,
-    normalMap: raw.normalMap,
-    normalScale: raw.normalScale,
-    anchors: { neckFront, neckBack, sleeve },
+    anchors: { neckFront, neckBack },
     insideAt,
     mask
   }
+}
+
+/* ----------------------------------------------------------------- folds */
+
+function seedOf(key: string) {
+  let h = 2166136261
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619)
+  return (h >>> 0) / 4294967295
+}
+
+/**
+ * How a garment naturally hangs, as an offset of its middle surface from flat
+ * (garment space, z towards the viewer). Soft vertical folds open up towards
+ * the hem, the hem itself undulates, and shallow drag lines run down from the
+ * hanger tips. The cloth sim treats this as the fabric's rest shape, so the
+ * folds are real geometry that swings, twists and settles with the garment.
+ */
+export function foldField(key: string, spec: GarmentSpec) {
+  const seed = seedOf(key)
+  const p1 = seed * Math.PI * 2
+  const p2 = seed * 17.3
+  const p3 = seed * 41.9
+  // Folds 18–26 cm apart (in garment units), slightly irregular per garment.
+  const f1 = 23 + seed * 4
+  const f2 = 33 + seed * 5
+  return (x: number, y: number) => {
+    const t = Math.min(1, Math.max(0, -y / spec.height))
+    const amp = 0.0015 + 0.014 * smoothstep(0.1, 1, t)
+    // Folds drift and fan out slightly as they fall.
+    let z = amp * (0.62 * Math.sin(x * f1 * (1 - 0.12 * t) + p1 + t * 1.6) + 0.38 * Math.sin(x * f2 + p2 - t * 1.1))
+    z += 0.003 * Math.sin(x * 41 + p3) * smoothstep(0.8, 1, t)
+    // Drag lines from the hanger tips, fading out by the chest.
+    const ridge = Math.abs(x) - (spec.shoulder - 0.32 * t)
+    z -= 0.007 * Math.exp(-(ridge * ridge) / 0.0018) * (1 - smoothstep(0.06, 0.3, t))
+    return z
+  }
+}
+
+let fabricNormal: THREE.CanvasTexture | null = null
+
+/**
+ * A tiling normal map of jersey knit — the fine texture of the cloth itself,
+ * not wrinkles. Wrinkles and folds come from the geometry.
+ */
+export function getFabricNormalMap() {
+  if (fabricNormal) return fabricNormal
+  const size = 256
+  const height = new Float32Array(size * size)
+  let seed = 11
+  const rand = () => {
+    seed = (seed * 16807) % 2147483647
+    return seed / 2147483647
+  }
+  // Rows of interlocking knit loops plus fibre noise.
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = (x % 8) / 8
+      const v = ((y + (Math.floor(x / 8) % 2) * 4) % 8) / 8
+      const loop = Math.sin(u * Math.PI) * (0.6 + 0.4 * Math.sin(v * Math.PI * 2))
+      height[y * size + x] = loop * 0.8 + (rand() - 0.5) * 0.35
+    }
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const img = ctx.createImageData(size, size)
+  const at = (x: number, y: number) => height[((y + size) % size) * size + ((x + size) % size)]!
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = at(x + 1, y) - at(x - 1, y)
+      const dy = at(x, y + 1) - at(x, y - 1)
+      const n = new THREE.Vector3(-dx, -dy, 2).normalize()
+      const i = (y * size + x) * 4
+      img.data[i] = (n.x * 0.5 + 0.5) * 255
+      img.data[i + 1] = (n.y * 0.5 + 0.5) * 255
+      img.data[i + 2] = (n.z * 0.5 + 0.5) * 255
+      img.data[i + 3] = 255
+    }
+  }
+  ctx.putImageData(img, 0, 0)
+  fabricNormal = new THREE.CanvasTexture(canvas)
+  fabricNormal.wrapS = fabricNormal.wrapT = THREE.RepeatWrapping
+  fabricNormal.colorSpace = THREE.NoColorSpace
+  return fabricNormal
 }
 
 /* ---------------------------------------------------------------- canvas */
@@ -651,20 +684,6 @@ export async function paintGarment(product: Product, model: GarmentModel, imageU
       ctx.font = `500 ${Math.round(0.019 * px)}px "Instrument Sans", system-ui, sans-serif`
       ctx.fillText('NIGERIA @ 66 · 1960—2026', canvas.width / 2, y + 0.042 * px)
     } else {
-      if (product.sleeve && anchors.sleeve) {
-        // Printed down the wearer's left sleeve.
-        const [a, b] = anchors.sleeve
-        const mid = a.clone().lerp(b, 0.55)
-        const r = rect(mid.x, mid.y, mid.x, mid.y)
-        ctx.save()
-        ctx.translate(r.x, r.y)
-        ctx.rotate(Math.atan2(-(b.y - a.y), b.x - a.x))
-        ctx.textBaseline = 'middle'
-        ctx.font = `600 ${Math.round(0.028 * px)}px "Instrument Sans", system-ui, sans-serif`
-        ctx.letterSpacing = `${Math.round(0.008 * px)}px`
-        ctx.fillText(product.sleeve.toUpperCase(), 0, 0)
-        ctx.restore()
-      }
       if (img && !allOver) {
         const top = anchors.neckFront - 0.075
         if (product.placement === 'pocket') drawContain(ctx, img, rect(0.07, top - 0.02, 0.22, top - 0.17))

@@ -12,8 +12,10 @@ import type { GarmentAsset } from './assets'
  * the hand ripples through it. The detailed garment mesh is bound to this grid
  * and deformed on the GPU, so the solver stays small.
  *
- * A faint shape memory stops the fabric drifting over time; `rigidity` raises
- * it a little while a piece is held up to look at.
+ * The fabric's rest shape includes its natural hanging folds (`foldAt`), so
+ * folds are real geometry with no shape memory pulling them flat: they swing,
+ * twist and resettle with the garment. `rigidity` adds a little memory while a
+ * piece is held up to look at.
  *
  * Settled cloth falls asleep and simply rides along with its hanger; anything
  * more than a tiny sway, or a brush, wakes it.
@@ -22,7 +24,7 @@ import type { GarmentAsset } from './assets'
 /** 9.81 m/s² in garment units (1 unit ≈ 0.74 m). */
 const GRAVITY = 13.2
 /** Velocity kept per step — still air around heavyweight cotton. */
-const DAMPING = 0.988
+const DAMPING = 0.985
 const ITERATIONS = 8
 const STEP = 1 / 75
 const MAX_STEPS = 4
@@ -40,7 +42,7 @@ export interface ClothGrid {
   cell: number
 }
 
-export const CLOTH_COLUMNS = 18
+export const CLOTH_COLUMNS = 24
 
 export function clothGrid(width: number, height: number): ClothGrid {
   const cell = width / (CLOTH_COLUMNS - 1)
@@ -81,23 +83,30 @@ vec3 clothShellAxis = normalize(clothFetch(${BLOCK_AXIS_Z}, aGrid));
 vec3 transformed = clothFetch(${BLOCK_POSITION}, aGrid) + clothShellAxis * aShell;
 `
 
-/** The reverse side of the fabric (seen through the neck, hem and cuffs) is in shadow. */
+/**
+ * The inside of the garment (seen through the neck, hem and cuffs) is plain
+ * fabric in shadow — prints are on the outside only.
+ */
 const INSIDE_SHADE = /* glsl */`
 #include <map_fragment>
-if (!gl_FrontFacing) diffuseColor.rgb *= 0.5;
+if (!gl_FrontFacing) diffuseColor.rgb = insideColor * 0.55;
 `
 
 function bindToCloth<T extends THREE.Material>(material: T, uniforms: { clothTex: THREE.IUniform, clothSize: THREE.IUniform }) {
+  const inside = { value: new THREE.Color((material.userData.inside as string | undefined) ?? '#ffffff') }
   material.onBeforeCompile = (shader) => {
     shader.uniforms.clothTex = uniforms.clothTex
     shader.uniforms.clothSize = uniforms.clothSize
+    shader.uniforms.insideColor = inside
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${VERTEX_PARS}`)
       .replace('#include <beginnormal_vertex>', BEGIN_NORMAL)
       .replace('#include <begin_vertex>', BEGIN_VERTEX)
-    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', INSIDE_SHADE)
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 insideColor;')
+      .replace('#include <map_fragment>', INSIDE_SHADE)
   }
-  material.customProgramCacheKey = () => 'cloth-v3'
+  material.customProgramCacheKey = () => 'cloth-v4'
   return material
 }
 
@@ -115,6 +124,9 @@ export class ClothSim {
   private inside: Uint8Array
   private pinned: Uint8Array
   private anchor: Int32Array
+  /** Long-range attachments: each particle's nearest pin and how far it may hang from it. */
+  private tether: Int32Array
+  private tetherLength: Float32Array
   private links: Int32Array
   private linkRest: Float32Array
   private linkStretch: Float32Array
@@ -142,6 +154,8 @@ export class ClothSim {
     this.inside = new Uint8Array(n)
     this.pinned = new Uint8Array(n)
     this.anchor = new Int32Array(n).fill(-1)
+    this.tether = new Int32Array(n).fill(-1)
+    this.tetherLength = new Float32Array(n)
     this.axes = new Float32Array(n * 6)
 
     const isInside = (x: number, y: number) => asset.insideAt(x, y)
@@ -150,7 +164,7 @@ export class ClothSim {
         const k = j * cols + i
         const x = -spec.width / 2 + i * cell
         const y = -j * cell
-        this.rest.set([x, y - spec.drop, 0], k * 3)
+        this.rest.set([x, y - spec.drop, asset.foldAt(x, y)], k * 3)
         this.inside[k] = isInside(x, y) ? 1 : 0
       }
     }
@@ -170,24 +184,26 @@ export class ClothSim {
     const compress: number[] = []
     const addLink = (a: number, b: number, kStretch: number, kCompress: number) => {
       if (!this.inside[a] || !this.inside[b]) return
-      const ax = this.rest[a * 3]!, ay = this.rest[a * 3 + 1]! + spec.drop
-      const bx = this.rest[b * 3]!, by = this.rest[b * 3 + 1]! + spec.drop
+      const ax = this.rest[a * 3]!, ay = this.rest[a * 3 + 1]! + spec.drop, az = this.rest[a * 3 + 2]!
+      const bx = this.rest[b * 3]!, by = this.rest[b * 3 + 1]! + spec.drop, bz = this.rest[b * 3 + 2]!
       if (!isInside((ax + bx) / 2, (ay + by) / 2)) return
       links.push(a, b)
-      linkRest.push(Math.hypot(bx - ax, by - ay))
+      linkRest.push(Math.hypot(bx - ax, by - ay, bz - az))
       stretch.push(kStretch)
       compress.push(kCompress)
     }
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
         const k = j * cols + i
-        // Knit fabric: barely stretches, gives way under compression, bends easily.
-        if (i + 1 < cols) addLink(k, k + 1, 1, 0.12)
-        if (j + 1 < rows) addLink(k, k + cols, 1, 0.12)
-        if (i + 1 < cols && j + 1 < rows) addLink(k, k + cols + 1, 0.6, 0.08)
-        if (i > 0 && j + 1 < rows) addLink(k, k + cols - 1, 0.6, 0.08)
-        if (i + 2 < cols) addLink(k, k + 2, 0.22, 0.04)
-        if (j + 2 < rows) addLink(k, k + cols * 2, 0.22, 0.04)
+        // Knit fabric: barely stretches, gives a little under compression and
+        // bends smoothly over a few centimetres. The skip-one links carry the
+        // fold shape (their rest length is a chord) and stop grid-sized kinks.
+        if (i + 1 < cols) addLink(k, k + 1, 1, 0.3)
+        if (j + 1 < rows) addLink(k, k + cols, 1, 0.3)
+        if (i + 1 < cols && j + 1 < rows) addLink(k, k + cols + 1, 0.6, 0.2)
+        if (i > 0 && j + 1 < rows) addLink(k, k + cols - 1, 0.6, 0.2)
+        if (i + 2 < cols) addLink(k, k + 2, 0.5, 0.32)
+        if (j + 2 < rows) addLink(k, k + cols * 2, 0.5, 0.32)
       }
     }
     this.links = Int32Array.from(links)
@@ -219,6 +235,25 @@ export class ClothSim {
       }
     }
     for (let k = 0; k < n; k++) if (!reached[k]) this.inside[k] = 0
+
+    // Tethers stop the fabric sagging under its own weight (cotton hardly
+    // stretches): nothing may hang further from its nearest pin than it does at rest.
+    const pins: number[] = []
+    for (let k = 0; k < n; k++) if (this.pinned[k]) pins.push(k)
+    for (let k = 0; k < n; k++) {
+      if (!this.inside[k] || this.pinned[k]) continue
+      let best = -1
+      let bestD = Infinity
+      for (const p of pins) {
+        const d = Math.hypot(this.rest[k * 3]! - this.rest[p * 3]!, this.rest[k * 3 + 1]! - this.rest[p * 3 + 1]!, this.rest[k * 3 + 2]! - this.rest[p * 3 + 2]!)
+        if (d < bestD) {
+          bestD = d
+          best = p
+        }
+      }
+      this.tether[k] = best
+      this.tetherLength[k] = bestD * 1.015
+    }
 
     // Ghost particles (off the fabric) ride along with their nearest fabric particle.
     const solid: number[] = []
@@ -258,7 +293,10 @@ export class ClothSim {
     this.mesh.matrixAutoUpdate = false
   }
 
-  /** Places the cloth on its hanger, optionally lifted so it drops into place. */
+  /**
+   * Places the cloth on its hanger and lets it settle for a moment off-screen,
+   * so it appears already hanging naturally (sleeves dropped, folds relaxed).
+   */
   reset(matrix: THREE.Matrix4, lift = 0) {
     this.lastMatrix.copy(matrix)
     this.computeTargets(matrix)
@@ -269,6 +307,11 @@ export class ClothSim {
       this.pos[o + 1] = this.prev[o + 1] = this.target[o + 1]! + lifted
       this.pos[o + 2] = this.prev[o + 2] = this.target[o + 2]!
     }
+    const e = matrix.elements
+    const scale = Math.hypot(e[0]!, e[1]!, e[2]!)
+    for (let s = 0; s < 120; s++) this.step(STEP, scale, 0)
+    // Bleed off what is left of the settling motion.
+    this.prev.set(this.pos)
     this.finish()
   }
 
@@ -389,7 +432,8 @@ export class ClothSim {
     }
 
     const { links, linkRest, linkStretch, linkCompress } = this
-    const shape = Math.min(0.4, 0.004 + rigidity * 0.18)
+    // A faint memory of how the garment naturally hangs, more while it is held up.
+    const shape = Math.min(0.4, 0.008 + rigidity * 0.15)
     for (let it = 0; it < ITERATIONS; it++) {
       for (let l = 0, c = 0; l < links.length; l += 2, c++) {
         const a = links[l]! * 3
@@ -413,7 +457,25 @@ export class ClothSim {
         pos[b + 1] = pos[b + 1]! - dy * s * wb
         pos[b + 2] = pos[b + 2]! - dz * s * wb
       }
-      if (it % 2 === 1) {
+      // Tethers.
+      const { tether, tetherLength } = this
+      for (let k = 0; k < this.count; k++) {
+        const p = tether[k]!
+        if (p < 0) continue
+        const o = k * 3
+        const q = p * 3
+        const dx = pos[o]! - pos[q]!
+        const dy = pos[o + 1]! - pos[q + 1]!
+        const dz = pos[o + 2]! - pos[q + 2]!
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz)
+        const max = tetherLength[k]! * scale
+        if (d <= max) continue
+        const f = max / d
+        pos[o] = pos[q]! + dx * f
+        pos[o + 1] = pos[q + 1]! + dy * f
+        pos[o + 2] = pos[q + 2]! + dz * f
+      }
+      if (shape > 0 && it % 2 === 1) {
         for (let k = 0; k < this.count; k++) {
           if (!inside[k] || pinned[k]) continue
           const o = k * 3
@@ -460,10 +522,29 @@ export class ClothSim {
         if (inside[k]) frame(k, i, j)
       }
     }
-    // Ghosts follow their anchor rigidly in its local frame.
+    // Ghosts (just off the fabric) continue the surface smoothly from the two
+    // nearest fabric particles in a row or column; failing that, they follow
+    // their anchor rigidly.
     const scale = this.currentScale()
+    const fabric = (i: number, j: number) => i >= 0 && j >= 0 && i < cols && j < rows && inside[j * cols + i] === 1
     for (let k = 0; k < this.count; k++) {
       if (inside[k]) continue
+      const i = k % cols
+      const j = (k - i) / cols
+      let extended = false
+      for (const [di, dj] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
+        if (!fabric(i + di, j + dj) || !fabric(i + 2 * di, j + 2 * dj)) continue
+        const n1 = ((j + dj) * cols + i + di) * 3
+        const n2 = ((j + 2 * dj) * cols + i + 2 * di) * 3
+        const o = k * 3
+        pos[o] = 2 * pos[n1]! - pos[n2]!
+        pos[o + 1] = 2 * pos[n1 + 1]! - pos[n2 + 1]!
+        pos[o + 2] = 2 * pos[n1 + 2]! - pos[n2 + 2]!
+        axes.copyWithin(k * 6, (n1 / 3) * 6, (n1 / 3) * 6 + 6)
+        extended = true
+        break
+      }
+      if (extended) continue
       const a = anchor[k]!
       if (a < 0) continue
       const ao = a * 6
@@ -502,8 +583,8 @@ export class ClothSim {
     const t = this.target
     const r = this.rest
     const dx = t[3]! - t[0]!, dy = t[4]! - t[1]!, dz = t[5]! - t[2]!
-    const rx = r[3]! - r[0]!, ry = r[4]! - r[1]!
-    return Math.hypot(dx, dy, dz) / (Math.hypot(rx, ry) || 1)
+    const rx = r[3]! - r[0]!, ry = r[4]! - r[1]!, rz = r[5]! - r[2]!
+    return Math.hypot(dx, dy, dz) / (Math.hypot(rx, ry, rz) || 1)
   }
 
   dispose() {
