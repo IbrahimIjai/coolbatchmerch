@@ -27,7 +27,7 @@ function easeInOutCubic(t: number) {
 /**
  * Presents one piece at a time, large and front-facing on its hanger.
  *
- * - Opening (or clicking the piece) gives it a full 360° twirl on the hanger;
+ * - Clicking the piece gives it a full 360° twirl on the hanger;
  *   the cloth simulation makes the fabric swing out and settle.
  * - Dragging spins it freely with momentum, then it eases to face front.
  * - Changing product slides the current piece out and the next one in.
@@ -96,7 +96,6 @@ export class ViewerController {
     this.current = actor
     this.spin = this.spinTarget = 0
     this.velocity = 0
-    if (direction === 0) this.startTwirl()
   }
 
   /** One full turn on the hanger, eased in and out. */

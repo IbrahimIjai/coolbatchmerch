@@ -76,7 +76,8 @@ function openProduct(index: number) {
           Drag to browse · tap a piece
         </p>
         <UButton
-          :to="availabilityHref(undefined, site.shopUrl || undefined)"
+          :to="availabilityHref()"
+          target="_blank"
           variant="outline"
           color="neutral"
           size="sm"

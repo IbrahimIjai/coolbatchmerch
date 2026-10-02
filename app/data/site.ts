@@ -1,6 +1,5 @@
 /**
  * Studio details shown in the header, ticker and side panels.
- * Replace the contact details before going live.
  */
 export const site = {
   brand: {
@@ -8,9 +7,11 @@ export const site = {
     name: 'Naija Threads'
   },
   description: 'Naija Threads — the Nigeria @ 66 independence capsule. Heavyweight tees in green, white and green.',
-  email: 'hello@naijathreads.ng',
-  instagram: 'https://instagram.com/naijathreads',
-  /** Optional shop link used by "See availability" on the rack. Leave empty to email instead. */
+  contact: {
+    portfolio: { label: 'iamibrahim.xyz', url: 'https://iamibrahim.xyz' },
+    x: { handle: 'ibrahimijai', url: 'https://x.com/ibrahimijai' }
+  },
+  /** Optional shop link used by "See availability" on the rack. Leave empty to send people to X instead. */
   shopUrl: '',
   ticker: [
     'New designs daily',
@@ -31,9 +32,7 @@ export const site = {
   }
 }
 
-export function availabilityHref(productName?: string, url?: string) {
-  if (url) return url
-  if (!productName && site.shopUrl) return site.shopUrl
-  const subject = productName ? `Availability — ${productName}` : 'Availability — Nigeria @ 66 capsule'
-  return `mailto:${site.email}?subject=${encodeURIComponent(subject)}`
+/** Where "See availability" goes: the product's own page, the shop, or a DM on X. */
+export function availabilityHref(url?: string) {
+  return url || site.shopUrl || site.contact.x.url
 }

@@ -112,8 +112,8 @@ const arrow = {
             </div>
           </Transition>
           <UButton
-            :to="availabilityHref(product.name, product.url)"
-            :target="product.url ? '_blank' : undefined"
+            :to="availabilityHref(product.url)"
+            target="_blank"
             variant="outline"
             color="neutral"
             size="sm"

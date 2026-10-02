@@ -5,7 +5,6 @@ const props = defineProps<{ kind: 'about' | 'contact' }>()
 const open = defineModel<boolean>('open', { required: true })
 
 const isAbout = computed(() => props.kind === 'about')
-const subscribeHref = `mailto:${site.email}?subject=${encodeURIComponent('Newsletter — sign me up')}&body=${encodeURIComponent('Please add me to the Naija Threads newsletter.')}`
 const linkClass = 'text-navy underline decoration-navy/30 underline-offset-4 transition-colors hover:decoration-navy'
 </script>
 
@@ -14,7 +13,7 @@ const linkClass = 'text-navy underline decoration-navy/30 underline-offset-4 tra
     v-model:open="open"
     :side="isAbout ? 'left' : 'right'"
     :title="isAbout ? site.about.title : 'Contact'"
-    :description="isAbout ? 'Who we are and what this capsule is about.' : 'Orders, collaborations and the newsletter.'"
+    :description="isAbout ? 'Who we are and what this capsule is about.' : 'Orders, collaborations and new drops.'"
     :ui="{
       overlay: 'bg-navy/15 backdrop-blur-[2px]',
       content: 'bg-paper ring-0 max-w-md',
@@ -73,35 +72,38 @@ const linkClass = 'text-navy underline decoration-navy/30 underline-offset-4 tra
       >
         <section class="space-y-1">
           <h3 class="text-[11px] tracking-[0.14em] text-navy/55 uppercase">
-            Email
+            Portfolio
           </h3>
           <a
-            :href="`mailto:${site.email}`"
-            :class="linkClass"
-          >{{ site.email }}</a>
-        </section>
-        <section class="space-y-1">
-          <h3 class="text-[11px] tracking-[0.14em] text-navy/55 uppercase">
-            Instagram
-          </h3>
-          <a
-            :href="site.instagram"
+            :href="site.contact.portfolio.url"
             target="_blank"
             rel="noopener"
             :class="linkClass"
-          >@{{ site.instagram.split('/').pop() }}</a>
+          >{{ site.contact.portfolio.label }}</a>
+        </section>
+        <section class="space-y-1">
+          <h3 class="text-[11px] tracking-[0.14em] text-navy/55 uppercase">
+            X
+          </h3>
+          <a
+            :href="site.contact.x.url"
+            target="_blank"
+            rel="noopener"
+            :class="linkClass"
+          >@{{ site.contact.x.handle }}</a>
         </section>
         <section class="space-y-3">
           <h3 class="text-[11px] tracking-[0.14em] text-navy/55 uppercase">
-            Newsletter
+            New drops
           </h3>
-          <p>New designs land most days. Join the list and we will send the drops, restocks and the odd studio note — nothing else.</p>
+          <p>New designs land most days. Follow along on X for drops and restocks, and send a DM to ask what's on the rail.</p>
           <UButton
-            :to="subscribeHref"
+            :to="site.contact.x.url"
+            target="_blank"
             variant="outline"
             color="neutral"
             size="sm"
-            label="Subscribe by email"
+            :label="`Follow @${site.contact.x.handle}`"
             :ui="pillButtonUi"
           />
         </section>

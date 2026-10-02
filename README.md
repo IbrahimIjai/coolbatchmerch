@@ -6,7 +6,7 @@ with Nuxt, Nuxt UI and Three.js.
 
 - **Hover** a piece and a hand turns its hanger to face you; only the pieces it
   bumps slide aside. Its name appears beneath it.
-- **Click** to open it larger. It gives a full 360° twirl on its hanger; drag
+- **Click** to open it larger. Click the piece again for a full 360° twirl on its hanger; drag
   to spin it yourself, arrows (or ← →) to browse, Esc to close.
 - **Drag** a piece to move it: the hook lifts off the rail, you carry it in
   front of the others, and it is lowered back where you let go. Neighbours shuffle
@@ -46,8 +46,9 @@ Everything on the rack comes from **`app/data/products.ts`**:
 }
 ```
 
-Studio name, contact details, ticker text and About copy live in
-**`app/data/site.ts`**. Without a `url`, "See availability" emails the studio.
+Studio name, contact links (portfolio and X), ticker text and About copy live
+in **`app/data/site.ts`**. Without a `url`, "See availability" opens the
+studio's X profile so people can DM.
 
 Print artwork is authored in `design/artwork.html` (SVG + Google Fonts) and
 exported to `public/merch` with `bun run render:artwork`. Any transparent PNG or
